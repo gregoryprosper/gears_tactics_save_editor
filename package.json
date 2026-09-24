@@ -1,0 +1,81 @@
+{
+  "name": "gears-tactics-save-editor",
+  "version": "0.1.0",
+  "description": "Local, lossless Gears Tactics save inspection and bounded scalar editing",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "author": "Gears Tactics Save Editor contributors",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "npm run typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write src tests scripts docs *.json *.ts *.md",
+    "format:check": "prettier --check src tests scripts docs *.json *.ts *.md",
+    "inspect-save": "node --import tsx src/cli/inspect-save.ts",
+    "diff-saves": "node --import tsx src/cli/diff-saves.ts",
+    "samples:report": "node --import tsx scripts/sample-report.ts",
+    "package": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "test:electron": "npm run build && node --import tsx scripts/electron-smoke.ts"
+  },
+  "build": {
+    "appId": "local.gearstactics.saveeditor",
+    "productName": "Gears Tactics Save Editor",
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
+  },
+  "dependencies": {
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^7.3.6",
+    "vitest": "^5.0.1"
+  }
+}

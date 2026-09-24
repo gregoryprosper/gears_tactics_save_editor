@@ -1,0 +1,182 @@
+import { basename } from 'node:path';
+import { randomUUID, createHash } from 'node:crypto';
+import { serialize, type GearsTacticsSave, type UnrealProperty } from '../save-format';
+import {
+  createPatches,
+  editableProperties,
+  maximumFor,
+  warningAbove,
+  type SavePatch,
+  type EditLimits,
+} from '../save-format/SavePatcher';
+import type { EditRequest, SessionView, ObjectDetail, PropertyView } from '../shared/api';
+export class EditingSession {
+  readonly id = randomUUID();
+  revision = 0;
+  editing = false;
+  private history: SavePatch[][] = [[]];
+  private position = 0;
+  constructor(
+    public path: string,
+    public save: GearsTacticsSave,
+    public limits: EditLimits,
+  ) {}
+  get patches(): SavePatch[] {
+    return this.history[this.position]!;
+  }
+  enable(): void {
+    if (!this.save.canSave) throw new Error('Structural validation failed; this save is read only');
+    this.editing = true;
+  }
+  apply(revision: number, changes: EditRequest[]): void {
+    if (!this.editing) throw new Error('Enable editing first');
+    if (revision !== this.revision)
+      throw new Error('The editing session changed. Refresh and try again.');
+    const merged = new Map<string, EditRequest>(
+      this.patches.map((p) => [
+        `${p.objectIndex}:${p.propertyName}`,
+        { objectIndex: p.objectIndex, propertyName: p.propertyName, value: p.newValue },
+      ]),
+    );
+    const seen = new Set<string>();
+    for (const c of changes) {
+      const key = `${c.objectIndex}:${c.propertyName}`;
+      if (seen.has(key)) throw new Error('Duplicate change');
+      seen.add(key);
+      merged.set(key, c);
+    }
+    const next = createPatches(this.save, [...merged.values()], this.limits);
+    if (JSON.stringify(next) === JSON.stringify(this.patches)) return;
+    this.history = this.history.slice(0, this.position + 1);
+    this.history.push(next);
+    this.position++;
+    this.revision++;
+  }
+  move(action: 'undo' | 'redo' | 'revert'): void {
+    if (action === 'undo' && this.position > 0) this.position--;
+    if (action === 'redo' && this.position < this.history.length - 1) this.position++;
+    if (action === 'revert' && this.patches.length) {
+      this.history = this.history.slice(0, this.position + 1);
+      this.history.push([]);
+      this.position++;
+    }
+    this.revision++;
+  }
+  committed(path: string, save: GearsTacticsSave): void {
+    this.path = path;
+    this.save = save;
+    this.history = [[]];
+    this.position = 0;
+    this.revision++;
+  }
+  snapshot(): SessionView {
+    const bytes = serialize(this.save);
+    return {
+      id: this.id,
+      revision: this.revision,
+      path: this.path,
+      filename: basename(this.path),
+      size: bytes.length,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+      header: this.save.header,
+      campaign: {
+        ...this.save.campaign,
+        rosterCapacity:
+          this.patches.find((p) => p.propertyName === 'SoldierRosterSize')?.newValue ??
+          this.save.campaign.rosterCapacity,
+      },
+      characters: this.save.characters.map((c) => ({
+        ...c,
+        stats: {
+          ...c.stats,
+          ...Object.fromEntries(
+            this.patches
+              .filter((p) => p.objectIndex === c.objectIndex)
+              .map((p) => [p.propertyName, p.newValue]),
+          ),
+        },
+      })),
+      objects: this.save.objects.map((o) => ({
+        index: o.index,
+        name: o.name,
+        classPath: o.classPath,
+        outerPath: o.outerPath,
+        propertyCount: o.properties.length,
+        searchText: flatten(o.properties)
+          .map((p) => `${p.name} ${p.type} ${p.value ?? ''}`)
+          .join(' ')
+          .toLowerCase(),
+      })),
+      warnings: this.save.warnings,
+      canSave: this.save.canSave,
+      editing: this.editing,
+      fields: editableProperties(this.save).map(({ objectIndex, property: p }) => ({
+        objectIndex,
+        name: p.name,
+        type: p.type,
+        originalValue: p.value as number,
+        value:
+          this.patches.find(
+            (patch) => patch.objectIndex === objectIndex && patch.propertyName === p.name,
+          )?.newValue ?? (p.value as number),
+        valueOffset: p.valueOffset,
+        minimum: 0,
+        maximum: maximumFor(p, this.limits),
+        warningAbove: warningAbove(p.name),
+      })),
+      patches: this.patches.map((p) => ({
+        objectIndex: p.objectIndex,
+        propertyName: p.propertyName,
+        label: p.description,
+        oldValue: p.oldValue,
+        newValue: p.newValue,
+        offset: p.offset,
+        oldHex: hex(p.oldBytes),
+        newHex: hex(p.newBytes),
+      })),
+      canUndo: this.position > 0,
+      canRedo: this.position < this.history.length - 1,
+    };
+  }
+  inspect(index: number): ObjectDetail {
+    const object = this.save.objects[index];
+    if (!object) throw new Error('Object index is out of range');
+    const properties: PropertyView[] = flatten(object.properties).map((p) => ({
+      name: p.name,
+      type: p.type,
+      size: p.size,
+      offset: p.offset,
+      valueOffset: p.valueOffset,
+      value:
+        p.referenceIndex !== undefined
+          ? `${p.referenceIndex === -1 ? 'None' : (this.save.objects[p.referenceIndex]?.name ?? 'Unresolved')} (#${p.referenceIndex})`
+          : p.text
+            ? (p.text.text ??
+              (p.text.key ? `Localization: ${p.text.key}` : `[${p.text.kind} text]`))
+            : p.value === undefined
+              ? '[opaque / structured payload]'
+              : String(p.value),
+      rawHex: hex(p.rawValue.subarray(0, 128)),
+      referenceIndex: p.referenceIndex,
+      metadata: p.metadata,
+    }));
+    return {
+      index: object.index,
+      name: object.name,
+      classPath: object.classPath,
+      outerPath: object.outerPath,
+      propertyCount: properties.length,
+      searchText: '',
+      properties,
+      bodyOffset: object.body?.bodyOffset,
+      endOffset: object.body?.endOffset,
+      outerIndex: object.body?.outerIndex,
+    };
+  }
+}
+function flatten(properties: UnrealProperty[]): UnrealProperty[] {
+  return properties.flatMap((p) => [p, ...flatten(p.children ?? [])]);
+}
+export function hex(buffer: Buffer): string {
+  return buffer.toString('hex').match(/.{2}/g)?.join(' ') ?? '';
+}
