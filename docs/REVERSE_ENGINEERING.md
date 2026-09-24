@@ -52,3 +52,18 @@ Further work: map native prefix/suffix records, localized text histories, skill 
 `AssetObjectProperty` contains a plain FString asset path (for example LoadingScreenSVO). It has the normal tag header with no additional type metadata. It is decoded read-only. Ability name level suffixes occur as both `_Lv3` and `_lv3`; label normalization is case-insensitive.
 
 Jack serializes CombatClass `Jackbot` and CharacterHero `SpecialHero_Jack`; display labels map these to Jack without changing raw identity. The full corpus ranges from 437 to 1647 objects and 2 to 23 character records. One Classic early slot 1 has a non-finite Accuracy float. The editor rejects writes to that file while preserving read-only inspection and exact round-trip bytes. See `sample-report.jsonl` for hashes, counts, slot counts and per-file diagnostics.
+
+## User-reported game load tests (2026-09-24)
+
+A separate slot 41 baseline contains 436 objects and two characters (Gabe level 1, Sid level 2). Its length is 440,438 bytes and SHA-256 is `3c9a5eca9d51d6c806be522e0a735d589ee2899c7cf332050bc5c3aa447e2e98`. The user confirmed the backup loads under the extensionless filename `GearGameSaveGame_Slot_41`.
+
+| Independent change from that baseline                              | Byte differences | User-reported result                                                     |
+| ------------------------------------------------------------------ | ---------------- | ------------------------------------------------------------------------ |
+| Gabe CurrentAbilityPoints 0 → 1 and Sid CurrentAbilityPoints 2 → 3 | Two              | Initially reported to fail; byte-identical combined retest works in-game |
+| Gabe Health 500 → 501                                              | One              | Works in-game                                                            |
+| Gabe CurrentAbilityPoints 0 → 1 alone                              | One              | Works in-game                                                            |
+| Sid CurrentAbilityPoints 2 → 3 alone                               | One              | Works in-game                                                            |
+
+All variants pass the editor's structural and byte-preservation checks. The user confirmed all three independent edits and the combined ability-point edit work for this save. This does not certify other values, fields or saves. The original deserialization failure did not reproduce with byte-identical combined output, and its cause remains unknown. No writer defect, checksum requirement or progression constraint was established; no writer code was changed. Do not treat a successful reparse as evidence of game acceptance or alter opaque data based on those hypotheses.
+
+A combined retest file was written through `atomicSave` from the original backup. Its contents equal the union of the two successful single-character point edits and are byte-identical to the original edited file reported to fail. Its SHA-256 is `4a76587d4e07f98d3688204742edace49033029540fd9af0d2498d6414a6f10f`. Exactly two byte positions differ from the baseline (302710 and 310249); length remains 440,438 bytes. The user confirmed this combined retest works in-game. These observations do not establish why the original loading attempt failed; game state, file handling and other external factors were not independently verified.

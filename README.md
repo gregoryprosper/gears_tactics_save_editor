@@ -2,7 +2,7 @@
 
 An independent, local-only Electron + React + TypeScript desktop application for inspecting Gears Tactics PC saves and patching validated, existing scalar values. No game art, analytics, telemetry, accounts, or runtime network services.
 
-**Milestone 1 is implemented. Milestone 2 supports bounded integer/float editing with backups and verification.** Text writing, skill insertion/removal, resets, equipment changes and reclassing are deliberately unavailable. “Safe” means tested binary preservation; this project has **not** loaded generated saves in the game or certified their gameplay behavior.
+**Milestone 1 is implemented. Milestone 2 supports bounded integer/float editing with backups and verification.** Text writing, skill insertion/removal, resets, equipment changes and reclassing are deliberately unavailable. “Safe” means tested binary preservation, not game compatibility. User testing confirmed Gabe’s health edit and Gabe/Sid ability-point edits, separately and combined, work for one save. An initial loading failure did not reproduce with byte-identical combined output; its cause remains unknown. These results do not certify other edits or saves; see the [game load test results](docs/REVERSE_ENGINEERING.md#user-reported-game-load-tests-2026-09-24).
 
 ## Install and run
 
