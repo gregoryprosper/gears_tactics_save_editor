@@ -4,6 +4,7 @@ import { findProperty, readPropertyList, structArray } from './PropertyParser';
 import { parseObjectTable } from './ObjectTableParser';
 import { parseRootArchive } from './ObjectArchive';
 import { parseCharacters, type ClassResolutionRules } from './CharacterParser';
+import { parseLearnedSkills } from './LearnedSkillParser';
 import { parseCampaign } from './CampaignParser';
 import { validateSave } from './SaveValidator';
 import type { GearsTacticsSave, ParseWarning } from './types';
@@ -42,6 +43,23 @@ export function parse(buffer: Buffer, rules?: ClassResolutionRules): GearsTactic
   });
   if (!objects.length || !roots.length) reader.fail('Save has no objects or roots');
   const characters = parseCharacters(objects, warnings, rules);
+  for (const character of characters) {
+    try {
+      character.learnedSkills = parseLearnedSkills(
+        original,
+        objects[character.objectIndex]!,
+        objects,
+      );
+    } catch {
+      warnings.push({
+        code: 'LEARNED_SKILLS_UNAVAILABLE',
+        severity: 'warning',
+        message: `${character.displayName}: learned skill tree could not be decoded; equipped cards remain available`,
+        objectIndex: character.objectIndex,
+        blocksSaving: false,
+      });
+    }
+  }
   const save: GearsTacticsSave = {
     header,
     properties,

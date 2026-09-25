@@ -3,6 +3,7 @@ import { Search, Shield, LockKeyhole, Crosshair, ChevronRight } from 'lucide-rea
 import type { SessionView } from '../../shared/api';
 import { ClassMark } from './Overview';
 import FieldEditor from './FieldEditor';
+import LearnedSkills from './LearnedSkills';
 export const fieldKey = (index: number, name: string) => `${index}:${name}`;
 export default function Soldiers({
   session: s,
@@ -110,7 +111,9 @@ export default function Soldiers({
                 onClick={() => setTab(name)}
               >
                 {name}
-                {name === 'Skills' && <span>{character.cardSlots.length}</span>}
+                {name === 'Skills' && character.learnedSkills && (
+                  <span>{character.learnedSkills.nodes.length}</span>
+                )}
               </button>
             ))}
           </div>
@@ -172,11 +175,13 @@ export default function Soldiers({
             )}
             {tab === 'Skills' && (
               <>
+                <LearnedSkills character={character} developer={developer} />
                 <div className="section-caption">
                   <div>
-                    <h3>Ability card slots</h3>
+                    <h3>Equipped ability cards</h3>
                     <p>
-                      Resolved through object relationships. Insertion and removal are unavailable.
+                      These slots show equipped cards only. Empty slots do not mean skills are
+                      locked.
                     </p>
                   </div>
                   <span className="tag neutral">READ ONLY</span>

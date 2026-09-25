@@ -7,6 +7,20 @@ export interface CharacterCardSlot {
   abilityCard?: SaveObjectRef;
   abilityLabel?: string;
 }
+export interface LearnedSkillReference {
+  index: number;
+  name: string;
+  label: string;
+}
+export interface LearnedSkillTree {
+  totalNodes: number;
+  nodes: {
+    nodeIndex: number;
+    ability?: LearnedSkillReference;
+    passive?: LearnedSkillReference;
+    effect?: LearnedSkillReference;
+  }[];
+}
 export interface CharacterState {
   objectIndex: number;
   objectName: string;
@@ -21,5 +35,6 @@ export interface CharacterState {
   classInferred: boolean;
   stats: Record<string, number>;
   cardSlots: CharacterCardSlot[];
+  learnedSkills?: LearnedSkillTree;
   unitReferences: SaveObjectRef[];
 }
