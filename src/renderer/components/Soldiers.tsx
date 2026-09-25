@@ -13,6 +13,9 @@ export default function Soldiers({
   drafts,
   onDraft,
   onInspect,
+  transferBusy,
+  onExport,
+  onImport,
 }: {
   session: SessionView;
   selected: number | undefined;
@@ -21,6 +24,9 @@ export default function Soldiers({
   drafts: Record<string, string>;
   onDraft: (key: string, value: string) => void;
   onInspect: (id: number) => void;
+  transferBusy: boolean;
+  onExport: (id: number) => void;
+  onImport: () => void;
 }) {
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('Stats');
@@ -47,7 +53,27 @@ export default function Soldiers({
           <h1>Soldiers</h1>
           <p>Inspect your roster and make precise, reversible stat changes.</p>
         </div>
-        <span className="tag neutral">{s.characters.length} RECORDS</span>
+        <div className="transfer-actions">
+          <button
+            className="button secondary"
+            disabled={transferBusy || !s.canSave || Object.keys(drafts).length > 0}
+            onClick={() => onExport(character.objectIndex)}
+          >
+            Export soldier…
+          </button>
+          <button
+            className="button secondary"
+            disabled={transferBusy || Object.keys(drafts).length > 0}
+            onClick={onImport}
+          >
+            Import soldier…
+          </button>
+        </div>
+      </div>
+      <div className="inline-note transfer-note">
+        Soldier archives can be exported as text. Import currently provides a compatibility preview;
+        complete transfers remain gated while generated test saves await in-game validation.
+        {Object.keys(drafts).length > 0 && ' Apply or discard drafts to use export and import.'}
       </div>
       <div className="soldier-layout">
         <aside className="roster-panel panel">

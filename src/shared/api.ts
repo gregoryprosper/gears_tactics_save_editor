@@ -1,6 +1,7 @@
 import type { CharacterState } from '../domain/Character';
 import type { CampaignState } from '../domain/Campaign';
 import type { GvasHeader, ParseWarning } from '../save-format/types';
+import type { SoldierImportPreview } from './soldier';
 export interface Settings {
   developerMode: boolean;
   experimentalEditing: boolean;
@@ -58,6 +59,8 @@ export interface ObjectDetail extends ObjectSummary {
   outerIndex?: number;
 }
 export interface SessionView {
+  dirty: boolean;
+  structuralChanges: string[];
   id: string;
   revision: number;
   filename: string;
@@ -78,6 +81,20 @@ export interface SessionView {
 }
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface EditorApi {
+  exportSoldier(
+    id: string,
+    revision: number,
+    objectIndex: number,
+  ): Promise<Result<{ path: string } | null>>;
+  prepareSoldierImport(id: string, revision: number): Promise<Result<SoldierImportPreview | null>>;
+  cancelSoldierImport(id: string, token: string): Promise<Result<void>>;
+  applySoldierImport(
+    id: string,
+    revision: number,
+    token: string,
+    mode: 'add' | 'replace',
+    target?: number,
+  ): Promise<Result<SessionView>>;
   settings(): Promise<Result<Settings>>;
   updateSettings(settings: Settings): Promise<Result<Settings>>;
   current(): Promise<Result<SessionView | null>>;

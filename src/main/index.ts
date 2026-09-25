@@ -5,8 +5,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse, serialize, MAX_SAVE_BYTES } from '../save-format';
 import { BinaryReader } from '../save-format/BinaryReader';
 import { EditingSession, hex } from './EditingSession';
-import { atomicSave } from './AtomicSave';
+import { atomicSave, atomicSaveStructural } from './AtomicSave';
 import { SettingsStore, validateSettings } from './Settings';
+import { readSoldierFile, writeSoldierFile } from './SoldierFiles';
 import type { EditRequest, Result } from '../shared/api';
 const directory = dirname(fileURLToPath(import.meta.url));
 if (!app.isPackaged && process.env.GTSE_TEST_DATA)
@@ -63,7 +64,7 @@ function integer(value: unknown, minimum = 0): number {
   return value;
 }
 async function discard(): Promise<boolean> {
-  if (!session?.patches.length && !draftsDirty) return true;
+  if (!session?.dirty && !draftsDirty) return true;
   const choice = await dialog.showMessageBox(window!, {
     type: 'warning',
     title: 'Unsaved changes',
@@ -88,6 +89,76 @@ async function load(path: string): Promise<void> {
   await preferences.persist();
 }
 function registerIpc(): void {
+  function noDrafts(): void {
+    if (draftsDirty)
+      throw new Error('Apply or discard draft values before exporting or importing a soldier');
+  }
+  handle(
+    'export-soldier',
+    async (id, revision, index) => {
+      noDrafts();
+      const s = current(id);
+      const pkg = s.exportSoldier(integer(revision), integer(index));
+      const filename =
+        pkg.soldier.displayName.replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 80) || 'Soldier';
+      const result = await dialog.showSaveDialog(window!, {
+        title: 'Export soldier archive — imports are not yet verified',
+        defaultPath: join(dirname(s.path), filename + '.soldier.txt'),
+        filters: [{ name: 'Soldier text file', extensions: ['txt'] }],
+      });
+      if (result.canceled || !result.filePath) return null;
+      noDrafts();
+      await writeSoldierFile(result.filePath, pkg);
+      return { path: result.filePath };
+    },
+    true,
+  );
+  handle(
+    'prepare-soldier-import',
+    async (id, revision) => {
+      noDrafts();
+      const s = current(id);
+      const requestedRevision = integer(revision);
+      const result = await dialog.showOpenDialog(window!, {
+        title: 'Import soldier — compatibility preview',
+        defaultPath: dirname(s.path),
+        properties: ['openFile'],
+        filters: [
+          { name: 'Soldier text files', extensions: ['txt', 'json'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      });
+      if (result.canceled || !result.filePaths[0]) return null;
+      const pkg = await readSoldierFile(result.filePaths[0]);
+      noDrafts();
+      return s.prepareSoldierImport(requestedRevision, pkg);
+    },
+    true,
+  );
+  handle(
+    'cancel-soldier-import',
+    (id, token) => {
+      if (typeof token !== 'string') throw new Error('Invalid import token');
+      current(id).cancelSoldierImport(token);
+    },
+    true,
+  );
+  handle(
+    'apply-soldier-import',
+    (id, revision, token, mode, target) => {
+      noDrafts();
+      if (typeof token !== 'string' || (mode !== 'add' && mode !== 'replace'))
+        throw new Error('Invalid import request');
+      const s = current(id);
+      s.applySoldierImport(
+        integer(revision),
+        token,
+        mode,
+        target === undefined ? undefined : integer(target),
+      );
+    },
+    true,
+  );
   handle('settings', () => preferences.settings);
   handle(
     'update-settings',
@@ -191,7 +262,9 @@ function registerIpc(): void {
         if (choice.canceled || !choice.filePath) return null;
         destination = choice.filePath;
       }
-      const result = await atomicSave(s.path, destination, s.save, s.patches, s.limits);
+      const result = s.structuralChanges.length
+        ? await atomicSaveStructural(s.path, destination, s.baselineSave, s.output())
+        : await atomicSave(s.path, destination, s.save, s.patches, s.limits);
       s.committed(result.path, result.save);
       return { session: s.snapshot(), backup: result.backup, noChange: result.noChange };
     },
@@ -272,7 +345,7 @@ async function createWindow(): Promise<void> {
       event.preventDefault();
       return;
     }
-    if (session?.patches.length || draftsDirty) {
+    if (session?.dirty || draftsDirty) {
       event.preventDefault();
       void discard().then((ok) => {
         if (ok) {

@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, copyFile, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parse } from '../src/save-format';
+import { readSoldierPackage } from '../src/save-format/SoldierTransfer';
 const temporary = await mkdtemp(join(tmpdir(), 'gears-electron-smoke-'));
 const source = join(temporary, 'geargamesavegame_slot_39');
 await copyFile('sample_save_files/END GAME -  Jacked/geargamesavegame_slot_39', source);
@@ -37,6 +38,41 @@ try {
   await page.screenshot({ path: 'artifacts/overview.png' });
   await page.getByRole('button', { name: 'Soldiers 17' }).click();
   await expect(page.getByRole('heading', { name: 'Gabe Diaz' })).toBeVisible();
+  // Real main/preload IPC and native dialog entry points, on temporary files only.
+  const soldierPath = join(temporary, 'Gabe.soldier.txt');
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: path });
+  }, soldierPath);
+  await page.getByRole('button', { name: 'Export soldier…', exact: true }).click();
+  await expect(page.getByText(/Soldier archive exported:/)).toBeVisible();
+  const soldierPackage = readSoldierPackage(await readFile(soldierPath, 'utf8'));
+  expect(soldierPackage.soldier.displayName).toBe('Gabe Diaz');
+  expect(soldierPackage.soldier.stats.ActionPoints).toBeUndefined();
+  expect(
+    soldierPackage.objects.filter((o) => o.classPath.endsWith('.GanderCharacterData')),
+  ).toHaveLength(1);
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, soldierPath);
+  await page.getByRole('button', { name: 'Import soldier…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Import soldier', exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/Complete soldier imports are not available in this build/),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Apply import', exact: true })).toBeDisabled();
+  const sidIndex = parse(original).characters.find((c) => c.hero === 'Sid')!.objectIndex;
+  await page.getByLabel('Destination soldier', { exact: true }).selectOption(String(sidIndex));
+  await expect(
+    page.getByText('Replacement requires the same class.', { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: 'artifacts/soldier-import-preview.png' });
+  await page.getByRole('button', { name: 'Cancel import', exact: true }).click();
+  expect(await readFile(source)).toEqual(original);
+  await app.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+  });
+  await page.getByRole('button', { name: 'Import soldier…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Import soldier', exact: true })).toHaveCount(0);
   await page.getByRole('tab', { name: /^Skills/ }).click();
   await expect(page.getByRole('heading', { name: 'Stim III', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Empty slot', exact: true })).toHaveCount(0);
@@ -65,6 +101,18 @@ try {
   await page.getByRole('tab', { name: 'Stats', exact: true }).click();
   await page.getByRole('button', { name: 'Enable editing' }).click();
   await page.getByRole('spinbutton', { name: 'Ability points', exact: true }).fill('20');
+  await expect(page.getByRole('button', { name: 'Export soldier…', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Import soldier…', exact: true })).toBeDisabled();
+  const rejectedExport = await page.evaluate(async () => {
+    const result = await window.editor!.current();
+    if (!result.ok || !result.value) throw new Error('Missing session');
+    return window.editor!.exportSoldier(
+      result.value.id,
+      result.value.revision,
+      result.value.characters[0]!.objectIndex,
+    );
+  });
+  expect(rejectedExport.ok).toBe(false);
   await expect(page.getByText('UNSAVED CHANGES', { exact: true })).toBeVisible();
   expect(await readFile(source)).toEqual(original);
   await page.getByRole('button', { name: /Apply changes/ }).click();
@@ -162,7 +210,7 @@ try {
   await expect(page.getByRole('button', { name: 'Enable editing', exact: true })).toBeDisabled();
   expect(errors).toEqual([]);
   console.log(
-    'Electron smoke passed: renderer isolation, actual fixture UI, skill counts, editing, undo/redo, character switching preserves draft ownership, backups, atomic write, Save As, developer inspector and unsafe-file gate.',
+    'Electron smoke passed: soldier archive export, import preview/cancel and draft gate, renderer isolation, actual fixture UI, skill counts, editing, undo/redo, character switching preserves draft ownership, backups, atomic write, Save As, developer inspector and unsafe-file gate.',
   );
 } finally {
   await app.close();

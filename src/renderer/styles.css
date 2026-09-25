@@ -1716,3 +1716,34 @@ td summary {
 .active-abilities .skill-card {
   min-height: 110px;
 }
+
+/* Soldier archive controls share the editor's existing modal and button styles. */
+.transfer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.transfer-note {
+  margin-bottom: 20px;
+}
+.transfer-options {
+  display: grid;
+  gap: 14px;
+  margin: 20px 0;
+}
+.transfer-options label {
+  display: grid;
+  gap: 8px;
+}
+.transfer-options select {
+  width: 100%;
+  padding: 10px;
+  color: inherit;
+  background: #191e23;
+  border: 1px solid #3b434b;
+  border-radius: 6px;
+}
+.transfer-findings {
+  padding-left: 22px;
+  line-height: 1.6;
+}

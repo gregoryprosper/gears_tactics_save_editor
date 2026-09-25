@@ -60,12 +60,40 @@ export async function atomicSave(
   patches: SavePatch[],
   limits: EditLimits,
 ): Promise<AtomicSaveResult> {
+  const output = patches.length ? applyPatches(save, patches, limits) : serialize(save);
+  return writeAtomic(sourcePath, destination, save, output, (bytes) =>
+    patches.length ? validateOutput(save, bytes, patches) : parse(bytes),
+  );
+}
+/** Accepts main-process transaction output, never renderer-provided bytes. */
+export async function atomicSaveStructural(
+  sourcePath: string,
+  destination: string,
+  baseline: GearsTacticsSave,
+  bytes: Buffer,
+): Promise<AtomicSaveResult> {
+  const expected = Buffer.from(bytes);
+  const validate = (output: Buffer): GearsTacticsSave => {
+    if (!output.equals(expected)) throw new Error('Structural transaction output changed');
+    const save = parse(output);
+    if (!save.canSave) throw new Error('Structural transaction failed validation');
+    return save;
+  };
+  validate(expected);
+  return writeAtomic(sourcePath, destination, baseline, expected, validate);
+}
+async function writeAtomic(
+  sourcePath: string,
+  destination: string,
+  save: GearsTacticsSave,
+  output: Buffer,
+  validate: (bytes: Buffer) => GearsTacticsSave,
+): Promise<AtomicSaveResult> {
   const path = resolve(destination);
   const sameFile = path === resolve(sourcePath);
   // No-op save never touches the filesystem, even when the save is inspection-only.
-  if (sameFile && !patches.length) return { path, noChange: true, save };
-  const output = patches.length ? applyPatches(save, patches, limits) : serialize(save);
-  if (patches.length === 0) parse(output); // Save As may copy an inspection-only file byte-for-byte.
+  if (sameFile && output.equals(serialize(save))) return { path, noChange: true, save };
+  validate(output);
   const lockPath = `${path}.editor-lock`;
   const lock = await open(lockPath, 'wx', 0o600).catch((error) => {
     if (code(error) === 'EEXIST')
@@ -93,8 +121,7 @@ export async function atomicSave(
     }
     const staged = await readFile(temp);
     if (!staged.equals(output)) throw new Error('Temporary file verification failed');
-    if (patches.length) validateOutput(save, staged, patches);
-    else parse(staged);
+    validate(staged);
     const latest = await readDestination(path);
     if (
       (existing === undefined) !== (latest === undefined) ||
@@ -116,7 +143,7 @@ export async function atomicSave(
       throw new Error(
         `Written file differs from validated output. Backup: ${backup ?? 'source file remains at ' + sourcePath}`,
       );
-    const result = patches.length ? validateOutput(save, written, patches) : parse(written);
+    const result = validate(written);
     return { path, backup, noChange: false, save: result };
   } catch (error) {
     throw new Error(
