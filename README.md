@@ -6,6 +6,18 @@ An independent, local-only Electron + React + TypeScript desktop application for
 
 ## Install and run
 
+Download a packaged app from the [v0.1.0 release](https://github.com/gregoryprosper/gears_tactics_save_editor/releases/tag/v0.1.0). Electron is bundled; Node.js is not required:
+
+- **Windows x64:** choose the `windows-x64-setup.exe` installer or the `windows-x64-portable.exe` app to run without installation.
+- **macOS (Apple Silicon and Intel):** open the `macos-universal.dmg` and drag the app to Applications.
+- `SHA256SUMS.txt` contains checksums for all three downloads.
+
+Windows executables are unsigned. The macOS app is ad-hoc signed, without a Developer ID signature or Apple notarization, so the OS may warn or block launch. The packaged app was launch-tested on Apple Silicon; Windows and Intel Mac runtime testing remains outstanding.
+
+See the [release guide](docs/RELEASING.md) for the build record, checksum verification, and publishing steps.
+
+### Run from source
+
 Use Node.js 22.12+ or 24 LTS and npm. Dependencies are locked in `package-lock.json`.
 
 ```bash
@@ -98,6 +110,8 @@ npx electron-builder --linux
 ```
 
 Build outputs exclude the sample saves, test data, and additional CSV mod files. Packaging may download Electron/platform tooling. Code signing credentials are not configured.
+
+For the Windows x64 installer/portable and universal macOS DMG commands used for releases, see [Building release assets](docs/RELEASING.md#building-release-assets).
 
 Typical Windows locations to check (installation and storefront dependent):
 
