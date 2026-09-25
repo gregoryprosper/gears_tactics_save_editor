@@ -1712,3 +1712,7 @@ td summary {
     grid-template-columns: 1fr;
   }
 }
+
+.active-abilities .skill-card {
+  min-height: 110px;
+}

@@ -13,10 +13,7 @@ export default function LearnedSkills({
       <div className="section-caption">
         <div>
           <h3>Learned skills</h3>
-          <p>
-            Unlocked abilities, upgrade ranks and passives. Equipped cards are listed separately
-            below.
-          </p>
+          <p>Unlocked abilities, upgrade ranks and passives. Active abilities are listed below.</p>
         </div>
         <span className="tag neutral">READ ONLY</span>
       </div>
@@ -66,7 +63,7 @@ export default function LearnedSkills({
         </>
       ) : (
         <p className="inline-note">
-          The learned skill tree is unavailable for this save layout. Equipped cards below do not
+          The learned skill tree is unavailable for this save layout. Active abilities below do not
           show every unlocked skill.
         </p>
       )}

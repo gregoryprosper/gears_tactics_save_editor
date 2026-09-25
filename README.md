@@ -66,7 +66,7 @@ It parses the observed GVAS version 1 / package version 502 header, tagged prope
 
 - Dynamically discovers regular soldiers, heroes and Jack. Regular characters have 10 observed slots; Jack has 21. All counts come from the save.
 - Shows learned skill-tree nodes, ability upgrade ranks and passives separately from equipped ability-card slots. The Skills count reflects learned nodes; a fully learned tree is labeled “All skills unlocked.”
-- Displays an empty equipped slot without implying that a skill is locked. Unsupported learned-tree layouts are labeled unavailable rather than shown as zero learned skills.
+- Lists equipped skills as **Active abilities**. Empty slots, raw card names and slot/object identifiers appear only in Developer mode. Unsupported learned-tree layouts are labeled unavailable rather than shown as zero learned skills.
 - Resolves ability object names (for example `GanderAbilityCard_Stim_Lv3` → `Stim III`) while retaining internal identifiers.
 - Labels missing CombatClass → Scout as a configurable inference.
 - Reads custom names/callsigns and preserves localization keys/formatted text. Hero labels use the CharacterHero identifier, not fixed roster positions.

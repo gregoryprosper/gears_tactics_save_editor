@@ -178,40 +178,48 @@ export default function Soldiers({
                 <LearnedSkills character={character} developer={developer} />
                 <div className="section-caption">
                   <div>
-                    <h3>Equipped ability cards</h3>
-                    <p>
-                      These slots show equipped cards only. Empty slots do not mean skills are
-                      locked.
-                    </p>
+                    <h3>Active abilities</h3>
+                    <p>Abilities currently equipped by this soldier.</p>
                   </div>
                   <span className="tag neutral">READ ONLY</span>
                 </div>
-                <div className="skills-grid">
-                  {character.cardSlots.map((slot) => (
-                    <div
-                      className={`skill-card ${slot.status === 'Empty' ? 'empty' : ''}`}
-                      key={slot.objectIndex}
-                    >
-                      <span className="slot-number">
-                        {String(slot.slotNumber + 1).padStart(2, '0')}
-                      </span>
-                      <span className={`skill-status ${slot.status.toLowerCase()}`}>
-                        {slot.status}
-                      </span>
-                      <Crosshair size={23} />
-                      <h4>
-                        {slot.abilityLabel ??
-                          (slot.status === 'Empty' ? 'Empty slot' : 'Unresolved ability')}
-                      </h4>
-                      <code>{slot.abilityCard?.name ?? 'No AbilityCard property'}</code>
-                      <small>
-                        SlotNum {slot.slotNumber}
-                        {slot.inferredSlotNumber ? ' (default inferred)' : ''} · Object #
-                        {slot.objectIndex}
-                        {slot.abilityCard ? ` → #${slot.abilityCard.index}` : ''}
-                      </small>
-                    </div>
-                  ))}
+                {!developer && character.cardSlots.every((slot) => slot.status === 'Empty') && (
+                  <p className="inline-note">No active abilities are equipped.</p>
+                )}
+                <div className={`skills-grid ${developer ? '' : 'active-abilities'}`}>
+                  {character.cardSlots
+                    .filter((slot) => developer || slot.status !== 'Empty')
+                    .map((slot) => (
+                      <div
+                        className={`skill-card ${slot.status === 'Empty' ? 'empty' : ''}`}
+                        key={slot.objectIndex}
+                      >
+                        {developer && (
+                          <span className="slot-number">
+                            {String(slot.slotNumber + 1).padStart(2, '0')}
+                          </span>
+                        )}
+                        <span className={`skill-status ${slot.status.toLowerCase()}`}>
+                          {slot.status}
+                        </span>
+                        <Crosshair size={23} />
+                        <h4>
+                          {slot.abilityLabel ??
+                            (slot.status === 'Empty' ? 'Empty slot' : 'Unresolved ability')}
+                        </h4>
+                        {developer && (
+                          <>
+                            <code>{slot.abilityCard?.name ?? 'No AbilityCard property'}</code>
+                            <small>
+                              SlotNum {slot.slotNumber}
+                              {slot.inferredSlotNumber ? ' (default inferred)' : ''} · Object #
+                              {slot.objectIndex}
+                              {slot.abilityCard ? ` → #${slot.abilityCard.index}` : ''}
+                            </small>
+                          </>
+                        )}
+                      </div>
+                    ))}
                 </div>
               </>
             )}
@@ -298,15 +306,17 @@ export default function Soldiers({
                   <div>
                     <dt>Card slots</dt>
                     <dd>
-                      {character.cardSlots.map((slot) => (
-                        <button
-                          className="index-button"
-                          key={slot.objectIndex}
-                          onClick={() => onInspect(slot.objectIndex)}
-                        >
-                          #{slot.objectIndex}
-                        </button>
-                      ))}
+                      {character.cardSlots
+                        .filter((slot) => developer || slot.status !== 'Empty')
+                        .map((slot) => (
+                          <button
+                            className="index-button"
+                            key={slot.objectIndex}
+                            onClick={() => onInspect(slot.objectIndex)}
+                          >
+                            #{slot.objectIndex}
+                          </button>
+                        ))}
                     </dd>
                   </div>
                 </dl>

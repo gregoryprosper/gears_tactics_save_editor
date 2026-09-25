@@ -39,7 +39,7 @@ try {
   await expect(page.getByRole('heading', { name: 'Gabe Diaz' })).toBeVisible();
   await page.getByRole('tab', { name: /^Skills/ }).click();
   await expect(page.getByRole('heading', { name: 'Stim III', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Empty slot', exact: true })).toHaveCount(2);
+  await expect(page.getByRole('heading', { name: 'Empty slot', exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/skills.png' });
   await page.getByLabel('Search soldiers').fill('Mikayla');
   await page.getByRole('button', { name: /Mikayla Dorn Sniper/ }).click();
@@ -48,8 +48,12 @@ try {
   await expect(page.getByText('ALL SKILLS UNLOCKED', { exact: true })).toBeVisible();
   await expect(page.locator('.learned-skill')).toHaveCount(35);
   await expect(page.locator('.learned-skill').filter({ hasText: 'Lucky Streak' })).toBeVisible();
-  await expect(page.locator('.skill-card')).toHaveCount(10);
-  await expect(page.getByRole('heading', { name: 'Empty slot', exact: true })).toHaveCount(3);
+  await expect(page.locator('.skill-card')).toHaveCount(7);
+  await expect(page.getByRole('heading', { name: 'Active abilities', exact: true })).toBeVisible();
+  await expect(
+    page.locator('.skill-card code, .skill-card small, .skill-card .slot-number'),
+  ).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Empty slot', exact: true })).toHaveCount(0);
   await page.screenshot({ path: 'artifacts/mikayla-learned-skills.png' });
   await page.getByLabel('Search soldiers').fill('Jack');
   await page.getByRole('button', { name: /Jack Jack · Level/ }).click();
@@ -121,6 +125,12 @@ try {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Developer mode', exact: true }).check();
   await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+  await page.getByRole('tab', { name: /^Skills/ }).click();
+  await expect(page.locator('.skill-card')).toHaveCount(10);
+  await expect(page.getByRole('heading', { name: 'Empty slot', exact: true })).toHaveCount(2);
+  await expect(page.locator('.skill-card code')).toHaveCount(10);
+  await expect(page.locator('.skill-card .slot-number')).toHaveCount(10);
+
   await page.getByRole('button', { name: 'Raw Inspector DEV' }).click();
   await page
     .getByRole('textbox', { name: 'Search objects, properties, or strings' })
