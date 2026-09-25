@@ -85,6 +85,19 @@ describe('fixed-width patch transactions', () => {
     expect(() => createPatches(save, [edit, edit])).toThrow(/Duplicate/);
     expect(() => createPatches(save, [{ ...edit, objectIndex: 99999 }])).toThrow();
   });
+  it('keeps Actions readable but rejects edits through the session and patch writer', () => {
+    const session = new EditingSession('/tmp/example', save, defaultLimits);
+    session.enable();
+    expect(
+      session.snapshot().characters.find((c) => c.hero === 'Gabriel')?.stats.ActionPoints,
+    ).toBe(3);
+    expect(session.snapshot().fields.some((f) => f.name === 'ActionPoints')).toBe(false);
+    const actionEdit = { ...edit, propertyName: 'ActionPoints', value: 4 };
+    expect(() => createPatches(save, [actionEdit])).toThrow(/not an editable/);
+    expect(() => session.apply(session.revision, [actionEdit])).toThrow(/not an editable/);
+    expect(session.patches).toEqual([]);
+    expect(serialize(session.save)).toEqual(bytes);
+  });
   it('rejects forged patch offsets and unrelated modifications', () => {
     const patches = createPatches(save, [edit]);
     expect(() => applyPatches(save, [{ ...patches[0]!, offset: 0 }])).toThrow(/provenance/);

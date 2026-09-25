@@ -73,6 +73,40 @@ try {
     parse(await readFile(source)).characters.find((c) => c.hero === 'Gabriel')?.stats
       .CurrentAbilityPoints,
   ).toBe(20);
+  // A draft belongs to its character even after selecting someone else before Apply/Save.
+  const beforeSniperEdit = await readFile(source);
+  const beforeSniperSave = parse(beforeSniperEdit);
+  const sniper = beforeSniperSave.characters.find((c) => c.hero === 'Mikayla')!;
+  const sniperHealth = beforeSniperSave.objects[sniper.objectIndex]!.properties.find(
+    (p) => p.name === 'Health',
+  )!;
+  const nextHealth = (sniperHealth.value as number) + 1;
+  await page.getByLabel('Search soldiers').fill('Mikayla');
+  await page.getByRole('button', { name: /Mikayla Dorn Sniper/ }).click();
+  await expect(page.getByRole('heading', { name: 'Mikayla Dorn' })).toBeVisible();
+  await expect(page.getByRole('spinbutton', { name: 'Actions', exact: true })).toHaveCount(0);
+  await page.getByRole('spinbutton', { name: 'Health', exact: true }).fill(String(nextHealth));
+  await page.getByLabel('Search soldiers').fill('Gabe');
+  await page.getByRole('button', { name: /Gabe Diaz Support/ }).click();
+  await expect(page.getByRole('spinbutton', { name: 'Actions', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('spinbutton', { name: 'Health', exact: true })).toHaveValue(
+    String(beforeSniperSave.characters.find((c) => c.hero === 'Gabriel')!.stats.Health),
+  );
+  await page.getByRole('button', { name: /Apply changes/ }).click();
+  await expect(page.locator('.patch strong')).toHaveText('Mikayla Dorn · Health');
+  await page.getByRole('button', { name: 'Save 1 changes', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Pending changes' })).not.toBeVisible();
+  const afterSniperEdit = await readFile(source);
+  const expectedSniperEdit = Buffer.from(beforeSniperEdit);
+  expectedSniperEdit.writeInt32LE(nextHealth, sniperHealth.valueOffset);
+  expect(afterSniperEdit).toEqual(expectedSniperEdit);
+  expect(await readFile(source + '.bak.1')).toEqual(beforeSniperEdit);
+  const afterSniperSave = parse(afterSniperEdit);
+  expect(afterSniperSave.characters.find((c) => c.hero === 'Mikayla')?.stats.Health).toBe(
+    nextHealth,
+  );
+  expect(afterSniperSave.characters.find((c) => c.hero === 'Mikayla')?.stats.ActionPoints).toBe(3);
+  expect(afterSniperSave.characters.find((c) => c.hero === 'Gabriel')?.stats.ActionPoints).toBe(3);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Developer mode', exact: true }).check();
   await page.getByRole('button', { name: 'Save settings', exact: true }).click();
@@ -107,7 +141,7 @@ try {
   await expect(page.getByRole('button', { name: 'Enable editing', exact: true })).toBeDisabled();
   expect(errors).toEqual([]);
   console.log(
-    'Electron smoke passed: renderer isolation, actual fixture UI, skill counts, editing, undo/redo, backups, atomic write, Save As, developer inspector and unsafe-file gate.',
+    'Electron smoke passed: renderer isolation, actual fixture UI, skill counts, editing, undo/redo, character switching preserves draft ownership, backups, atomic write, Save As, developer inspector and unsafe-file gate.',
   );
 } finally {
   await app.close();

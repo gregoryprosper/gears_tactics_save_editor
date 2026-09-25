@@ -15,13 +15,7 @@ export interface EditLimits {
   abilityPointsMaximum: number;
 }
 export const defaultLimits: EditLimits = { abilityPointsMaximum: 2147483647 };
-const integers = new Set([
-  'CurrentAbilityPoints',
-  'Health',
-  'Strength',
-  'MovementPoints',
-  'ActionPoints',
-]);
+const integers = new Set(['CurrentAbilityPoints', 'Health', 'Strength', 'MovementPoints']);
 export function editableProperties(
   save: GearsTacticsSave,
 ): { objectIndex: number; property: UnrealProperty }[] {
@@ -62,7 +56,6 @@ export function warningAbove(name: string): number {
         Accuracy: 1,
         Strength: 1000,
         MovementPoints: 20,
-        ActionPoints: 10,
         SoldierRosterSize: 30,
       } as Record<string, number>
     )[name] ?? 1000
