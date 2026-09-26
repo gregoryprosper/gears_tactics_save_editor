@@ -50,6 +50,7 @@ export interface SoldierPackage {
     inventoryClass: string;
     assetIdentity?: string;
   }[];
+  weaponDefinitions?: { id: string; kind: number; flag: number; level: number }[];
 }
 
 export interface SoldierImportPreview {

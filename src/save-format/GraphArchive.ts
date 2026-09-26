@@ -108,8 +108,8 @@ export function readArchiveGraph(save: GearsTacticsSave): ArchiveGraph {
 }
 
 /**
- * Research writer: first-reference body emission, live-object table compaction and relocation.
- * Production import stays gated separately until generated candidates pass game validation.
+ * Structural writer: first-reference body emission, live-object table compaction and relocation.
+ * Production import separately enforces native compatibility and destination constraints.
  */
 export function writeArchiveGraph(graph: ArchiveGraph): {
   bytes: Buffer;

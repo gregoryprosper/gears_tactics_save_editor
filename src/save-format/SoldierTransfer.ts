@@ -1,9 +1,11 @@
 import { BinaryReader } from './BinaryReader';
+import { readWeaponRegistry } from './WeaponRegistry';
 import {
   readInventoryDefinitions,
   readNativeRoster,
   assignedSoldiers,
   nativeTransferFindings,
+  transferGameType,
 } from './NativeSoldier';
 import { readStructuralArchive, type ArchiveNode } from './StructuralArchive';
 import type { GearsTacticsSave, SaveObject } from './types';
@@ -153,7 +155,7 @@ export function exportSoldier(save: GearsTacticsSave, objectIndex: number): Sold
       saveVersion: save.header.saveVersion,
       packageVersion: save.header.packageVersion,
       engineVersion: save.header.engineVersion,
-      gameType: save.campaign.gameType ?? 'Unknown',
+      gameType: transferGameType(save) ?? 'Unknown',
       gameState: save.campaign.gameState ?? 'Unknown',
       customVersions: [...versions.values()],
     },
@@ -162,6 +164,17 @@ export function exportSoldier(save: GearsTacticsSave, objectIndex: number): Sold
     objects,
     bindings,
     inventoryDefinitions,
+    weaponDefinitions: [
+      ...new Map(
+        readWeaponRegistry(save)
+          .groups.flat()
+          .filter((entry) => ids.has(entry.objectIndex))
+          .map(({ objectIndex, kind, flag, level }) => [
+            objectIndex,
+            { id: ids.get(objectIndex)!, kind, flag, level },
+          ]),
+      ).values(),
+    ],
   };
   // Exported packages obey exactly the same bounded format checks as imported packages.
   return readSoldierPackage(stringifySoldierPackage(result));
@@ -222,6 +235,7 @@ export function readSoldierPackage(text: string): SoldierPackage {
     'objects',
     'bindings',
     'inventoryDefinitions',
+    'weaponDefinitions',
   ]);
   if (value.format !== 'gears-tactics-soldier' || value.version !== 1)
     fail('unsupported format or version');
@@ -376,6 +390,20 @@ export function readSoldierPackage(text: string): SoldierPackage {
   )
     fail('expected exactly one soldier');
   for (const ref of references) if (!ids.has(ref)) fail(`unresolved reference ${ref}`);
+  if (value.weaponDefinitions !== undefined) {
+    const seen = new Set<string>();
+    for (const entry of array(value.weaponDefinitions, 4)) {
+      const d = record(entry, ['id', 'kind', 'flag', 'level']);
+      const id = identifier(d.id);
+      const object = objects.find((o) => (o as Record<string, unknown>).id === id) as
+        Record<string, unknown> | undefined;
+      if (seen.has(id) || object?.classPath !== '/Script/GanderGame.WeaponData')
+        fail('invalid weapon definition reference');
+      seen.add(id);
+      integer(d.kind, 255);
+      if (d.flag !== 1 || integer(d.level, 100) < 1) fail('invalid weapon definition metadata');
+    }
+  }
   if (value.inventoryDefinitions !== undefined) {
     const seen = new Set<string>();
     for (const entry of array(value.inventoryDefinitions, 10000)) {
@@ -418,12 +446,12 @@ export function previewSoldierImport(
     pkg.source.engineVersion !== save.header.engineVersion
   )
     blockers.push('The source and destination save formats differ.');
-  if (pkg.source.gameType !== save.campaign.gameType)
+  const destinationMode = transferGameType(save);
+  if (!destinationMode || pkg.source.gameType === 'Unknown')
+    blockers.push('The game mode could not be identified. Re-export old soldier archives.');
+  else if (pkg.source.gameType !== destinationMode)
     blockers.push('The source and destination game modes differ.');
-  if (
-    !pkg.source.gameState.endsWith('ConvoyMeta') ||
-    !save.campaign.gameState?.endsWith('ConvoyMeta')
-  )
+  if (pkg.source.gameState !== 'ConvoyMeta' || save.campaign.gameState !== 'ConvoyMeta')
     blockers.push(
       'Only campaign/barracks saves are in scope; active-combat transfers are unavailable.',
     );
@@ -437,9 +465,6 @@ export function previewSoldierImport(
       'The source class is inferred from an omitted value and has not been verified for transfer.',
     );
   blockers.push(...nativeTransferFindings(save, pkg));
-  blockers.push(
-    'Complete import is unavailable until in-game validation is completed. No changes will be applied.',
-  );
   const add: { blockers: string[] } = { blockers: [] };
   if (heroId(pkg.soldier.hero))
     add.blockers.push('Heroes and Jack can only replace the same hero already in this save.');
@@ -494,6 +519,8 @@ export function previewSoldierImport(
     blockers,
     add,
     replacements,
-    canApply: false,
+    canApply:
+      blockers.length === 0 &&
+      (add.blockers.length === 0 || replacements.some((r) => r.blockers.length === 0)),
   };
 }

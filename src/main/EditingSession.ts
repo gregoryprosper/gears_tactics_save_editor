@@ -60,7 +60,7 @@ export class EditingSession {
       ? applyPatches(this.save, this.patches, this.limits)
       : serialize(this.save);
   }
-  /** Internal research transaction. Deliberately not exposed over IPC until game validation. */
+  /** Internal transaction builder. Production IPC enters through the validated preview below. */
   stageResearchImport(
     revision: number,
     pkg: SoldierPackage,
@@ -76,6 +76,9 @@ export class EditingSession {
       throw new Error('Imported ability points exceed the configured maximum');
     const imports = [
       ...this.structuralChanges,
+      ...this.patches.map(
+        (p) => `${p.description}: ${p.oldValue} → ${p.newValue} (applied before import)`,
+      ),
       `${mode === 'add' ? 'Add' : 'Replace'} soldier: ${character.displayName}`,
     ];
     this.history = this.history.slice(0, this.position + 1);
@@ -97,6 +100,14 @@ export class EditingSession {
     if (revision !== this.revision) throw new Error('The editing session changed. Preview again.');
     const validated = readSoldierPackage(stringifySoldierPackage(pkg));
     const assessment = previewSoldierImport(this.appliedSave(), validated);
+    if (!this.editing) {
+      assessment.blockers.push('Enable editing before importing a soldier.');
+      assessment.canApply = false;
+    }
+    if ((validated.soldier.stats.CurrentAbilityPoints ?? 0) > this.limits.abilityPointsMaximum) {
+      assessment.blockers.push('Imported ability points exceed the configured maximum.');
+      assessment.canApply = false;
+    }
     const token = randomUUID();
     this.soldierPreview = { token, revision, package: validated };
     return { ...assessment, token, revision };
@@ -109,7 +120,7 @@ export class EditingSession {
     token: string,
     mode: 'add' | 'replace',
     target?: number,
-  ): never {
+  ): void {
     if (!this.editing) throw new Error('Enable editing first');
     const pending = this.soldierPreview;
     if (
@@ -126,8 +137,8 @@ export class EditingSession {
       ...assessment.blockers,
       ...(mode === 'add' ? assessment.add.blockers : destination!.blockers),
     ];
-    // A validated text archive is not a verified relocation recipe. Never fall back to scalar edits.
-    throw new Error(reasons.join('\n') || 'No verified soldier transfer writer is available');
+    if (reasons.length) throw new Error(reasons.join('\n'));
+    this.stageResearchImport(revision, pending.package, mode, target);
   }
   enable(): void {
     if (!this.save.canSave) throw new Error('Structural validation failed; this save is read only');

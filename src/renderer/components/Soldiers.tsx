@@ -71,8 +71,8 @@ export default function Soldiers({
         </div>
       </div>
       <div className="inline-note transfer-note">
-        Soldier archives can be exported as text. Import currently provides a compatibility preview;
-        complete transfers remain gated while generated test saves await in-game validation.
+        Export a soldier as text, then import into a compatible campaign save. Add regular recruits
+        or replace soldiers of the same class. Source and destination game modes must match.
         {Object.keys(drafts).length > 0 && ' Apply or discard drafts to use export and import.'}
       </div>
       <div className="soldier-layout">

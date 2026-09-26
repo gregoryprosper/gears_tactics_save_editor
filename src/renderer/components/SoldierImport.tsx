@@ -29,10 +29,10 @@ export default function SoldierImport({
       <p className="muted">
         {preview.objectCount} archived objects · {preview.soldier.skills.length} skill slots
       </p>
-      <div className="warning-note">
-        Compatibility preview only. Complete soldier imports are not available in this build. The
-        transfer engine can generate separate research copies for game testing. Applying imports
-        remains gated until those copies pass in-game validation.
+      <div className="inline-note">
+        Add a regular recruit or replace a soldier of the same class. Heroes and Jack must replace
+        their existing counterpart. Import stages identity, appearance, stats, skills and equipment
+        as one undoable change. Save writes the result with a backup.
       </div>
       <div className="transfer-options">
         <label>
@@ -67,6 +67,9 @@ export default function SoldierImport({
         )}
       </div>
       <h3>Compatibility findings</h3>
+      {preview.blockers.length === 0 && reasons.length === 0 && (
+        <p>Compatible with the selected import mode.</p>
+      )}
       <ul className="transfer-findings">
         {[...preview.blockers, ...reasons].map((reason) => (
           <li key={reason}>{reason}</li>

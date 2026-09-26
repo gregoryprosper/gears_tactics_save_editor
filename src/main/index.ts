@@ -102,7 +102,7 @@ function registerIpc(): void {
       const filename =
         pkg.soldier.displayName.replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 80) || 'Soldier';
       const result = await dialog.showSaveDialog(window!, {
-        title: 'Export soldier archive — imports are not yet verified',
+        title: 'Export soldier archive',
         defaultPath: join(dirname(s.path), filename + '.soldier.txt'),
         filters: [{ name: 'Soldier text file', extensions: ['txt'] }],
       });
@@ -156,6 +156,7 @@ function registerIpc(): void {
         mode,
         target === undefined ? undefined : integer(target),
       );
+      return s.snapshot();
     },
     true,
   );

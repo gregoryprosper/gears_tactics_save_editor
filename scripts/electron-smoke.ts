@@ -57,7 +57,7 @@ try {
   await page.getByRole('button', { name: 'Import soldier…', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Import soldier', exact: true })).toBeVisible();
   await expect(
-    page.getByText(/Complete soldier imports are not available in this build/),
+    page.getByText('Enable editing before importing a soldier.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Apply import', exact: true })).toBeDisabled();
   const sidIndex = parse(original).characters.find((c) => c.hero === 'Sid')!.objectIndex;
@@ -201,6 +201,79 @@ try {
   await page.getByRole('button', { name: 'Save as…', exact: true }).click();
   await expect(page.locator('.statusbar')).toContainText('save-as-copy');
   expect(await readFile(copy)).toEqual(await readFile(source));
+  // Export/import via the UI: Heavy Add is one undoable transaction and writes a verified backup.
+  const beforeAdd = await readFile(copy);
+  await page.getByRole('button', { name: 'Soldiers 17', exact: true }).click();
+  await page.getByLabel('Search soldiers').fill('Gary');
+  await page.getByRole('button', { name: /Gary Carmine Heavy/ }).click();
+  const garyPath = join(temporary, 'Gary.soldier.txt');
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: path });
+  }, garyPath);
+  await page.getByRole('button', { name: 'Export soldier…', exact: true }).click();
+  await expect(
+    page.getByText(`Soldier archive exported: ${garyPath}`, { exact: true }),
+  ).toBeVisible();
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, garyPath);
+  await page.getByRole('button', { name: 'Import soldier…', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Apply import', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Apply import', exact: true }).click();
+  await expect(page.locator('.patch strong')).toHaveText('Add soldier: Gary Carmine');
+  expect(await readFile(copy)).toEqual(beforeAdd);
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Soldiers 18', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Soldiers 17', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Redo', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Soldiers 18', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: 'Save 1 changes', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Pending changes' })).not.toBeVisible();
+  expect(await readFile(copy + '.bak')).toEqual(beforeAdd);
+  expect(
+    parse(await readFile(copy)).characters.filter((c) => c.displayName === 'Gary Carmine'),
+  ).toHaveLength(2);
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, copy);
+  await page.getByRole('button', { name: 'Open save', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Soldiers 18', exact: true })).toBeVisible();
+
+  // Cross-save Gabe Replace, preserving the target Actions, followed by a real disk reload.
+  const targetPath = join(temporary, 'early-destination');
+  await copyFile('sample_save_files/NEW GAME - Jacked Mode/geargamesavegame_slot_39', targetPath);
+  const beforeReplace = await readFile(targetPath);
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, targetPath);
+  await page.getByRole('button', { name: 'Open save', exact: true }).click();
+  await page.getByRole('button', { name: 'Enable editing', exact: true }).click();
+  await page.getByRole('button', { name: 'Soldiers 2', exact: true }).click();
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, soldierPath);
+  await page.getByRole('button', { name: 'Import soldier…', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Apply import', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Apply import', exact: true }).click();
+  await expect(page.locator('.patch strong')).toHaveText('Replace soldier: Gabe Diaz');
+  await page.screenshot({ path: 'artifacts/soldier-import-applied.png' });
+  await page.getByRole('button', { name: 'Save 1 changes', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Pending changes' })).not.toBeVisible();
+  expect(await readFile(targetPath + '.bak')).toEqual(beforeReplace);
+  const replaced = parse(await readFile(targetPath));
+  expect(replaced.characters.find((c) => c.hero === 'Gabriel')?.stats.Level).toBe(15);
+  expect(replaced.characters.find((c) => c.hero === 'Gabriel')?.stats.ActionPoints).toBe(3);
+  expect(replaced.characters).toHaveLength(2);
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, targetPath);
+  await page.getByRole('button', { name: 'Open save', exact: true }).click();
+  const reloaded = await page.evaluate(() => window.editor!.current());
+  if (!reloaded.ok || !reloaded.value) throw new Error('Missing reloaded import session');
+  expect(reloaded.value.characters.find((c) => c.hero === 'Gabriel')?.stats.Level).toBe(15);
+  expect(reloaded.value.dirty).toBe(false);
   const invalid = resolve('sample_save_files/NEW GAME - Classic Mode/geargamesavegame_slot_1');
   await app.evaluate(({ dialog }, path) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
@@ -210,7 +283,7 @@ try {
   await expect(page.getByRole('button', { name: 'Enable editing', exact: true })).toBeDisabled();
   expect(errors).toEqual([]);
   console.log(
-    'Electron smoke passed: soldier archive export, import preview/cancel and draft gate, renderer isolation, actual fixture UI, skill counts, editing, undo/redo, character switching preserves draft ownership, backups, atomic write, Save As, developer inspector and unsafe-file gate.',
+    'Electron smoke passed: soldier export, Heavy Add and cross-save Gabe Replace, undo/redo, save/backups/reload, preview/cancel/draft gates, renderer isolation and existing editor regressions.',
   );
 } finally {
   await app.close();

@@ -2,8 +2,20 @@ import { BinaryReader } from './BinaryReader';
 import { readFrame } from './ObjectArchive';
 import { readPropertyList, structArray, findProperty } from './PropertyParser';
 import { serialize } from './index';
+import { readWeaponRegistry } from './WeaponRegistry';
 import type { GearsTacticsSave, SaveObject } from './types';
 import type { SoldierNode, SoldierPackage } from '../shared/soldier';
+
+/** Classic omits SaveInfo.GameType; its concrete inventory class identifies the mode. */
+export function transferGameType(save: GearsTacticsSave): string | undefined {
+  if (save.campaign.gameType) return save.campaign.gameType;
+  const inventories = save.objects.filter((o) => o.classPath.includes('GanderMetaInventory_'));
+  return inventories.length === 1 &&
+    inventories[0]!.classPath ===
+      '/Game/Gameplay/Meta/GanderMetaInventory_BP.GanderMetaInventory_BP_C'
+    ? 'Classic'
+    : undefined;
+}
 
 /** Reads primitive native data without mistaking a framed object for an integer. */
 class Tokens {
@@ -343,6 +355,19 @@ export function nativeTransferFindings(save: GearsTacticsSave, pkg: SoldierPacka
         );
     }
     const byId = new Map(pkg.objects.map((o) => [o.id, o]));
+    if (!pkg.weaponDefinitions)
+      throw new Error('Re-export the soldier to include weapon registry definitions');
+    const registry = readWeaponRegistry(save);
+    const usedWeapons = new Set(native.weapons.flatMap((w) => (w.reference ? [w.reference] : [])));
+    if (pkg.weaponDefinitions.some((d) => !usedWeapons.has(d.id)))
+      throw new Error('Weapon definition is not equipped by the soldier');
+    for (const [slot, weapon] of native.weapons.entries()) {
+      if (!weapon.reference) continue;
+      const definition = pkg.weaponDefinitions.find((d) => d.id === weapon.reference);
+      if (!definition) throw new Error('Missing exported weapon registry definition');
+      if (!registry.groups[slot]!.some((entry) => entry.kind === definition.kind))
+        throw new Error('Destination has no matching weapon type in the required loadout slot');
+    }
     for (const weapon of native.weapons)
       if (
         weapon.reference &&

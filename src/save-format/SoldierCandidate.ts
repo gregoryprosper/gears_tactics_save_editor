@@ -1,12 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { parse } from './index';
 import { BinaryReader } from './BinaryReader';
+import { readWeaponRegistry, writeWeaponRegistry } from './WeaponRegistry';
 import { readSoldierPackage, stringifySoldierPackage } from './SoldierTransfer';
 import {
   assetIdentity,
   assignedSoldiers,
   readNativeRoster,
   nativeTransferFindings,
+  readNativeSoldier,
+  transferGameType,
 } from './NativeSoldier';
 import {
   readArchiveGraph,
@@ -24,6 +27,23 @@ const hero = (value?: string): string | undefined =>
 
 /** Canonical object content ignores physical reference placement and recomputed payload sizes. */
 function canonical(nodes: GraphNode[], remap: (index: number) => number): string {
+  function sequence(input: GraphNode[]): unknown[] {
+    const result: unknown[] = [];
+    let pending: Buffer[] = [];
+    const flush = () => {
+      if (pending.length) result.push(['bytes', Buffer.concat(pending).toString('hex')]);
+      pending = [];
+    };
+    for (const n of input) {
+      if (n.kind === 'bytes') pending.push(n.bytes);
+      else {
+        flush();
+        result.push(node(n));
+      }
+    }
+    flush();
+    return result;
+  }
   function node(n: GraphNode): unknown {
     switch (n.kind) {
       case 'bytes':
@@ -31,18 +51,18 @@ function canonical(nodes: GraphNode[], remap: (index: number) => number): string
       case 'reference':
         return ['ref', remap(n.index)];
       case 'root':
-        return ['root', n.body.map(node), n.versions.toString('hex')];
+        return ['root', sequence(n.body), n.versions.toString('hex')];
       case 'property': {
         const tag = Buffer.from(n.tag),
           r = new BinaryReader(tag);
         r.fstring();
         r.fstring();
         tag.writeUInt32LE(0, r.offset);
-        return ['property', tag.toString('hex'), n.payload.map(node)];
+        return ['property', tag.toString('hex'), sequence(n.payload)];
       }
     }
   }
-  return JSON.stringify(nodes.map(node));
+  return JSON.stringify(sequence(nodes));
 }
 
 export interface SoldierCandidate {
@@ -61,7 +81,8 @@ export interface SoldierCandidate {
 }
 
 /**
- * Produces a separately saved game-test candidate. Never used by production Apply/Save.
+ * Builds validated structural output for the session and separate game-test copies.
+ * Production Apply additionally checks the revision-bound preview in EditingSession.
  * All package bytes are reparsed and every surviving unrelated object is compared after relocation.
  */
 export function buildSoldierCandidate(
@@ -75,7 +96,8 @@ export function buildSoldierCandidate(
   if (destination.campaign.gameState !== 'ConvoyMeta' || pkg.source.gameState !== 'ConvoyMeta')
     throw new Error('Only campaign/barracks candidates are supported');
   if (
-    pkg.source.gameType !== destination.campaign.gameType ||
+    pkg.source.gameType === 'Unknown' ||
+    pkg.source.gameType !== transferGameType(destination) ||
     pkg.source.saveVersion !== destination.header.saveVersion ||
     pkg.source.packageVersion !== destination.header.packageVersion ||
     pkg.source.engineVersion !== destination.header.engineVersion
@@ -245,6 +267,27 @@ export function buildSoldierCandidate(
   let endOfProperties = 2;
   while (newSoldier.body[endOfProperties]?.kind === 'property') endOfProperties++;
   newSoldier.body.splice(endOfProperties, 0, ...protectedNodes);
+  // Register new weapon instances before their character references them. The game restores
+  // weapon type/level from these records, not from the sparse WeaponData property body.
+  const registry = readWeaponRegistry(destination);
+  const native = readNativeSoldier(sourceObjects.get(pkg.root)!.body);
+  for (const [slot, weapon] of native.weapons.entries()) {
+    if (!weapon.reference) continue;
+    const definition = pkg.weaponDefinitions!.find((d) => d.id === weapon.reference)!;
+    const entry = {
+      kind: definition.kind,
+      flag: definition.flag,
+      level: definition.level,
+      objectIndex: resolve(weapon.reference),
+    };
+    // The two grenade lists contain both grenade alternatives, even if only one is equipped.
+    for (const group of slot >= 2 ? [2, 3] : [slot]) {
+      if (!registry.groups[group]!.some((e) => e.objectIndex === entry.objectIndex))
+        registry.groups[group]!.push(entry);
+    }
+  }
+  const inventory = graph.objects.get(registry.objectIndex)!;
+  inventory.body = writeWeaponRegistry(inventory.body, registry);
   if (mode === 'add') {
     const object = graph.objects.get(roster.objectIndex)!;
     const tail = object.body.findIndex((n) => n.kind === 'property');
@@ -324,8 +367,9 @@ export function buildSoldierCandidate(
       continue;
     const after = resultGraph.objects.get(output.indices.get(index)!)!;
     if (
-      canonical(before, (i) => (i === -1 ? -1 : output.indices.get(i)!)) !==
-      canonical(after.body, (i) => i)
+      canonical(index === registry.objectIndex ? inventory.body : before, (i) =>
+        i === -1 ? -1 : output.indices.get(i)!,
+      ) !== canonical(after.body, (i) => i)
     )
       throw new Error(`Unrelated object changed: ${index}`);
   }

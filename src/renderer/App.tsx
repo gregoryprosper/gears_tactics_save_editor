@@ -148,10 +148,7 @@ export default function App() {
       const result = unwrap(
         await window.editor!.exportSoldier(session.id, session.revision, index),
       );
-      if (result)
-        setMessage(
-          `Soldier archive exported: ${result.path}. Complete imports are not yet available.`,
-        );
+      if (result) setMessage(`Soldier archive exported: ${result.path}`);
     });
   }
   async function importSoldier() {
@@ -533,6 +530,8 @@ export default function App() {
                 ),
               );
               setSoldierImport(null);
+              setSelected(undefined);
+              setChangesOpen(true);
             })
           }
         />
@@ -540,18 +539,15 @@ export default function App() {
       {changesOpen && session && (
         <Modal title="Pending changes" onClose={() => setChangesOpen(false)}>
           <p className="muted">
-            Review the exact values that will be written. Unknown data and unrelated regions remain
-            byte-identical.
+            {session.structuralChanges.length
+              ? 'Review the staged edits and soldier imports. Imports rebuild the archive while preserving unrelated object data.'
+              : 'Review the exact values that will be written. Unknown data and unrelated regions remain byte-identical.'}
           </p>
           {session.dirty ? (
             <div className="patch-list">
               {session.structuralChanges.map((label, index) => (
                 <div className="patch" key={`import-${index}`}>
                   <strong>{label}</strong>
-                  <p>
-                    Complete soldier transaction; destination action points and campaign state
-                    preserved.
-                  </p>
                 </div>
               ))}
               {session.patches.map((p) => (

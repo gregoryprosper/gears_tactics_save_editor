@@ -48,11 +48,13 @@ Only existing, unique, four-byte properties on verified object identities:
 
 Actions (`ActionPoints`), level, squad assignments, class, text, identity and equipment are read only. Actions editing was removed because its effect on combat could not be reliably attributed to the selected character; ability-point editing remains available. Omitted properties are not inserted. No single-field “Reclass” button exists. Enabling **Experimental Editing** records the preference and shows a warning, but does not unlock any unimplemented operation.
 
-## Soldier archives and import previews
+## Soldier export and import
 
 On **Soldiers**, **Export soldier…** writes one readable `.soldier.txt` archive containing the selected soldier's applied state and discovered dependencies. Apply or discard drafts first and choose a new filename; exports never overwrite existing files. This text extension is for the archive, not the game's binary save.
 
-**Import soldier… currently provides a compatibility preview; production Apply is gated pending game validation.** The transfer engine now decodes the observed native soldier, roster and inventory layouts and generates separate Add/Replace test saves through a research CLI. It preserves destination Actions, campaign data and replacement squad assignments, resolves gear definitions, and rejects unsupported transfers. Undoable structural transactions and atomic persistence are implemented and tested internally. No preview or attempted desktop import changes the save. See [test-copy instructions and remaining release gate](docs/SOLDIER_TRANSFER.md).
+**Import soldier… supports adding regular recruits and replacing soldiers of the same class in compatible campaign/barracks saves.** Heroes and Jack must replace their existing counterpart. Classic-to-Classic and Jacked-to-Jacked transfers use the same compatibility checks; cross-mode and active-combat imports remain unavailable. User tests confirmed Gary Add and Gabe Replace, including weapons, combat, abilities, Actions through turn 2, and save/reload. These validate the shared transfer path without claiming every combination has been tested in-game.
+
+Enable editing, open the soldier text archive, choose Add or Replace and review compatibility findings. **Apply import** stages identity, appearance, progression, skills and equipment as one undoable transaction. Review Pending changes, then Save or Save as. The importer preserves destination Actions and campaign progress, retains squad assignments on Replace, and adds recruits unassigned without expanding capacity. Missing dependencies, full rosters, inferred classes and unsupported layouts block import. Old archives without weapon registration definitions must be re-exported. See [compatibility rules and validation evidence](docs/SOLDIER_TRANSFER.md).
 
 ## Save protection
 

@@ -13,6 +13,7 @@ import {
 } from '../src/save-format/SoldierTransfer';
 import { EditingSession } from '../src/main/EditingSession';
 import { defaultLimits } from '../src/save-format/SavePatcher';
+import { readNativeRoster } from '../src/save-format/NativeSoldier';
 import { readSoldierFile, writeSoldierFile } from '../src/main/SoldierFiles';
 import type { SoldierNode, SoldierPackage } from '../src/shared/soldier';
 
@@ -145,13 +146,91 @@ describe('untrusted text packages', () => {
   });
 });
 describe('compatibility preview and session isolation', () => {
+  it('applies Add and Replace through revision-bound previews', () => {
+    for (const [name, mode] of [
+      ['Gary Carmine', 'add'],
+      ['Gabe Diaz', 'replace'],
+    ] as const) {
+      const session = new EditingSession('/not-written', save, defaultLimits);
+      const soldier = save.characters.find((c) => c.displayName === name)!;
+      const archive = exportSoldier(save, soldier.objectIndex);
+      expect(session.prepareSoldierImport(0, archive).canApply).toBe(false);
+      session.enable();
+      const preview = session.prepareSoldierImport(0, archive);
+      expect(preview.canApply).toBe(true);
+      session.applySoldierImport(0, preview.token, mode, soldier.objectIndex);
+      expect(session.dirty).toBe(true);
+      expect(session.save.characters.length).toBe(
+        save.characters.length + (mode === 'add' ? 1 : 0),
+      );
+      const output = session.output();
+      expect(() => session.applySoldierImport(0, preview.token, mode, soldier.objectIndex)).toThrow(
+        /stale/,
+      );
+      session.move('undo');
+      expect(session.output()).toEqual(serialize(save));
+      session.move('redo');
+      expect(session.output()).toEqual(output);
+    }
+  });
+  it('enforces hero restrictions in the main process and rejects unsupported versions and point limits', () => {
+    const session = new EditingSession('/not-written', save, defaultLimits);
+    session.enable();
+    const sid = save.characters.find((c) => c.hero === 'Sid')!;
+    const archive = exportSoldier(save, sid.objectIndex);
+    const preview = session.prepareSoldierImport(0, archive);
+    expect(preview.canApply).toBe(true);
+    expect(() => session.applySoldierImport(0, preview.token, 'add')).toThrow(/Heroes and Jack/);
+    expect(session.dirty).toBe(false);
+    const future = structuredClone(pkg);
+    future.source.customVersions[0]!.version++;
+    expect(previewSoldierImport(save, future).canApply).toBe(false);
+    const excessive = structuredClone(pkg);
+    session.limits = { ...defaultLimits, abilityPointsMaximum: 100 };
+    excessive.soldier.stats.CurrentAbilityPoints = 101;
+    expect(session.prepareSoldierImport(0, excessive).blockers.join(' ')).toMatch(
+      /configured maximum/,
+    );
+  });
+  it('supports compatible classes, heroes and Jack in both Classic and Jacked saves', () => {
+    for (const path of [
+      samplePath,
+      'sample_save_files/END GAME -  Classic Mode/geargamesavegame_slot_0',
+    ]) {
+      const destination = parse(readFileSync(path));
+      const recruited = new Set(readNativeRoster(destination).groups[0]!.map((c) => c.objectIndex));
+      const classes = new Set<string>();
+      for (const soldier of destination.characters) {
+        if (
+          soldier.classInferred ||
+          !recruited.has(soldier.objectIndex) ||
+          classes.has(soldier.combatClass)
+        )
+          continue;
+        classes.add(soldier.combatClass);
+        const session = new EditingSession('/not-written', destination, defaultLimits);
+        session.enable();
+        const archive = exportSoldier(destination, soldier.objectIndex);
+        expect(archive.source.gameType).toBe(path === samplePath ? 'Operation' : 'Classic');
+        const preview = session.prepareSoldierImport(0, archive);
+        expect(preview.canApply, `${path}: ${soldier.displayName}`).toBe(true);
+        session.applySoldierImport(0, preview.token, 'replace', soldier.objectIndex);
+        expect(session.save.canSave).toBe(true);
+        expect(session.save.characters).toHaveLength(destination.characters.length);
+      }
+      expect([...classes]).toEqual(
+        expect.arrayContaining(['Support', 'Vanguard', 'Heavy', 'Sniper']),
+      );
+      if (path === samplePath) expect(classes.has('Jack')).toBe(true);
+    }
+  });
   it('explains same-class, hero, mode, template and native-format restrictions', () => {
     const preview = previewSoldierImport(save, pkg);
-    expect(preview.canApply).toBe(false);
+    expect(preview.canApply).toBe(true);
     expect(
       preview.blockers.some((b) => /Unmapped|Missing exported|Destination does not/.test(b)),
     ).toBe(false);
-    expect(preview.blockers.join(' ')).toMatch(/in-game validation/);
+    expect(preview.blockers).toEqual([]);
     expect(preview.add.blockers.join(' ')).toMatch(/Heroes and Jack/);
     const sid = save.characters.find((c) => c.hero === 'Sid')!;
     expect(
@@ -176,9 +255,14 @@ describe('compatibility preview and session isolation', () => {
     const before = session.snapshot();
     const bytes = serialize(session.save);
     const preview = session.prepareSoldierImport(1, pkg);
-    expect(() => session.applySoldierImport(1, preview.token, 'replace', gabe.objectIndex)).toThrow(
-      /unavailable/,
-    );
+    expect(() =>
+      session.applySoldierImport(
+        1,
+        preview.token,
+        'replace',
+        save.characters.find((c) => c.hero === 'Sid')!.objectIndex,
+      ),
+    ).toThrow(/same class/);
     expect(session.snapshot()).toEqual(before);
     expect(serialize(session.save)).toEqual(bytes);
     session.cancelSoldierImport(preview.token);

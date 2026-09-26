@@ -18,6 +18,7 @@ import {
 } from '../src/save-format/NativeSoldier';
 import { buildSoldierCandidate } from '../src/save-format/SoldierCandidate';
 import type { SoldierNode } from '../src/shared/soldier';
+import { readWeaponRegistry, writeWeaponRegistry } from '../src/save-format/WeaponRegistry';
 
 const endBytes = readFileSync('sample_save_files/END GAME -  Jacked/geargamesavegame_slot_39');
 const earlyBytes = readFileSync(
@@ -47,6 +48,11 @@ describe('native codecs across the corpus', () => {
       const roster = readNativeRoster(save);
       expect(roster.groups.flat()).toHaveLength(save.characters.length);
       expect(readInventoryDefinitions(save).length).toBeGreaterThan(400);
+      const registry = readWeaponRegistry(save);
+      const graph = readArchiveGraph(save);
+      const inventory = graph.objects.get(registry.objectIndex)!;
+      inventory.body = writeWeaponRegistry(inventory.body, registry);
+      expect(writeArchiveGraph(graph).bytes.equals(bytes)).toBe(true);
       expect(
         [...assignedSoldiers(save)].every((index) =>
           save.characters.some((c) => c.objectIndex === index),
@@ -58,7 +64,7 @@ describe('native codecs across the corpus', () => {
     expect(roster.groups.map((g) => g.length)).toEqual([13, 4, 0, 0]);
     const preview = previewSoldierImport(end, packageFor('Gary Carmine'));
     expect(preview.add.blockers).toEqual([]);
-    expect(preview.canApply).toBe(false); // production gate requires game validation
+    expect(preview.canApply).toBe(true); // Compatible native data and available capacity
   });
   it('decodes every character including sparse learned skills and Jack', () => {
     for (const c of end.characters) {
@@ -84,6 +90,63 @@ describe('native codecs across the corpus', () => {
 });
 
 describe('complete research candidate generation', () => {
+  it('registers imported weapons with donor type/level and preserves existing weapon records', () => {
+    const before = readWeaponRegistry(end);
+    for (const [name, mode] of [
+      ['Gary Carmine', 'add'],
+      ['Gabe Diaz', 'replace'],
+    ] as const) {
+      const pkg = packageFor(name);
+      const candidate = buildSoldierCandidate(end, pkg, mode, character(name).objectIndex);
+      const result = parse(candidate.bytes);
+      const after = readWeaponRegistry(result);
+      // Existing inventory instances keep their identities, types and levels even if indices move.
+      const identify = (save: typeof end, e: (typeof before.groups)[number][number]) => ({
+        kind: e.kind,
+        flag: e.flag,
+        level: e.level,
+        name: save.objects[e.objectIndex]!.name,
+      });
+      for (const [index, group] of before.groups.entries())
+        expect(after.groups[index]!.slice(0, group.length).map((e) => identify(result, e))).toEqual(
+          group.map((e) => identify(end, e)),
+        );
+      expect(after.groups[4]!.length).toBe(before.groups[4]!.length);
+      const imported = exportSoldier(result, candidate.soldierIndex);
+      const native = readNativeSoldier(imported.objects[0]!.body);
+      const originalNative = readNativeSoldier(pkg.objects[0]!.body);
+      for (const [slot, weapon] of native.weapons.entries()) {
+        if (!weapon.reference) continue;
+        const object = imported.objects.find((o) => o.id === weapon.reference)!;
+        const index = result.objects.find((o) => o.name === object.name)!.index;
+        const expected = pkg.weaponDefinitions!.find(
+          (d) => d.id === originalNative.weapons[slot]!.reference,
+        )!;
+        expect(after.groups[slot]!.find((e) => e.objectIndex === index)).toEqual({
+          objectIndex: index,
+          kind: expected.kind,
+          flag: expected.flag,
+          level: expected.level,
+        });
+        if (slot >= 2)
+          expect(after.groups[slot === 2 ? 3 : 2]!.some((e) => e.objectIndex === index)).toBe(true);
+        expect(weapon.modifications).toEqual(originalNative.weapons[slot]!.modifications);
+      }
+      expect(imported.weaponDefinitions).toHaveLength(pkg.weaponDefinitions!.length);
+    }
+    expect(serialize(end)).toEqual(endBytes);
+  });
+  it('rejects missing and slot-incompatible weapon metadata instead of producing blank loadouts', () => {
+    const missing = packageFor('Gary Carmine');
+    delete missing.weaponDefinitions;
+    expect(() => buildSoldierCandidate(end, missing, 'add')).toThrow(/Re-export.*weapon registry/);
+    const incomplete = packageFor('Gary Carmine');
+    incomplete.weaponDefinitions!.pop();
+    expect(() => buildSoldierCandidate(end, incomplete, 'add')).toThrow(/Missing exported weapon/);
+    const wrong = packageFor('Gary Carmine');
+    wrong.weaponDefinitions![0]!.kind = 255;
+    expect(() => buildSoldierCandidate(end, wrong, 'add')).toThrow(/matching weapon type/);
+  });
   it('transfers a hero between saves while preserving destination actions and campaign', () => {
     const donor = early.characters.find((c) => c.hero === 'Gabriel')!;
     const target = character('Gabe Diaz');
@@ -252,7 +315,10 @@ describe('structural transaction history and persistence', () => {
       const beforeImport = session.output();
       session.stageResearchImport(session.revision, packageFor('Gary Carmine'), 'add');
       const imported = session.output();
-      expect(session.snapshot().structuralChanges).toEqual(['Add soldier: Gary Carmine']);
+      expect(session.snapshot().structuralChanges).toEqual([
+        expect.stringMatching(/Gabe Diaz · Health: .* → 777 \(applied before import\)/),
+        'Add soldier: Gary Carmine',
+      ]);
       expect(session.save.characters.find((c) => c.hero === 'Gabriel')?.stats.Health).toBe(777);
       session.move('undo');
       expect(session.output()).toEqual(beforeImport);
