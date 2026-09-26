@@ -1,8 +1,9 @@
 import { basename } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import { serialize, type GearsTacticsSave, type UnrealProperty } from '../save-format';
+import { parse, serialize, type GearsTacticsSave, type UnrealProperty } from '../save-format';
 import {
   createPatches,
+  applyPatches,
   editableProperties,
   maximumFor,
   warningAbove,
@@ -10,19 +11,134 @@ import {
   type EditLimits,
 } from '../save-format/SavePatcher';
 import type { EditRequest, SessionView, ObjectDetail, PropertyView } from '../shared/api';
+import {
+  exportSoldier,
+  previewSoldierImport,
+  readSoldierPackage,
+  stringifySoldierPackage,
+} from '../save-format/SoldierTransfer';
+import type { SoldierImportPreview, SoldierPackage } from '../shared/soldier';
+import { buildSoldierCandidate } from '../save-format/SoldierCandidate';
+interface SessionState {
+  save: GearsTacticsSave;
+  patches: SavePatch[];
+  imports: string[];
+}
 export class EditingSession {
   readonly id = randomUUID();
   revision = 0;
   editing = false;
-  private history: SavePatch[][] = [[]];
+  private history: SessionState[];
+  private baseline: GearsTacticsSave;
   private position = 0;
+  private soldierPreview?: { token: string; revision: number; package: SoldierPackage };
   constructor(
     public path: string,
-    public save: GearsTacticsSave,
+    save: GearsTacticsSave,
     public limits: EditLimits,
-  ) {}
+  ) {
+    this.baseline = save;
+    this.history = [{ save, patches: [], imports: [] }];
+  }
+  get save(): GearsTacticsSave {
+    return this.history[this.position]!.save;
+  }
+  get baselineSave(): GearsTacticsSave {
+    return this.baseline;
+  }
+  get structuralChanges(): string[] {
+    return [...this.history[this.position]!.imports];
+  }
+  get dirty(): boolean {
+    return Boolean(this.patches.length || this.structuralChanges.length);
+  }
   get patches(): SavePatch[] {
-    return this.history[this.position]!;
+    return this.history[this.position]!.patches;
+  }
+  output(): Buffer {
+    return this.patches.length
+      ? applyPatches(this.save, this.patches, this.limits)
+      : serialize(this.save);
+  }
+  /** Internal transaction builder. Production IPC enters through the validated preview below. */
+  stageResearchImport(
+    revision: number,
+    pkg: SoldierPackage,
+    mode: 'add' | 'replace',
+    target?: number,
+  ): void {
+    if (!this.editing) throw new Error('Enable editing first');
+    if (revision !== this.revision) throw new Error('The editing session changed. Preview again.');
+    const candidate = buildSoldierCandidate(this.appliedSave(), pkg, mode, target);
+    const parsed = parse(candidate.bytes);
+    const character = parsed.characters.find((c) => c.objectIndex === candidate.soldierIndex)!;
+    if ((character.stats.CurrentAbilityPoints ?? 0) > this.limits.abilityPointsMaximum)
+      throw new Error('Imported ability points exceed the configured maximum');
+    const imports = [
+      ...this.structuralChanges,
+      ...this.patches.map(
+        (p) => `${p.description}: ${p.oldValue} → ${p.newValue} (applied before import)`,
+      ),
+      `${mode === 'add' ? 'Add' : 'Replace'} soldier: ${character.displayName}`,
+    ];
+    this.history = this.history.slice(0, this.position + 1);
+    this.history.push({ save: parsed, patches: [], imports });
+    this.position++;
+    this.revision++;
+    this.soldierPreview = undefined;
+  }
+  private appliedSave(): GearsTacticsSave {
+    return this.patches.length
+      ? parse(applyPatches(this.save, this.patches, this.limits))
+      : this.save;
+  }
+  exportSoldier(revision: number, objectIndex: number): SoldierPackage {
+    if (revision !== this.revision) throw new Error('The editing session changed. Export again.');
+    return exportSoldier(this.appliedSave(), objectIndex);
+  }
+  prepareSoldierImport(revision: number, pkg: SoldierPackage): SoldierImportPreview {
+    if (revision !== this.revision) throw new Error('The editing session changed. Preview again.');
+    const validated = readSoldierPackage(stringifySoldierPackage(pkg));
+    const assessment = previewSoldierImport(this.appliedSave(), validated);
+    if (!this.editing) {
+      assessment.blockers.push('Enable editing before importing a soldier.');
+      assessment.canApply = false;
+    }
+    if ((validated.soldier.stats.CurrentAbilityPoints ?? 0) > this.limits.abilityPointsMaximum) {
+      assessment.blockers.push('Imported ability points exceed the configured maximum.');
+      assessment.canApply = false;
+    }
+    const token = randomUUID();
+    this.soldierPreview = { token, revision, package: validated };
+    return { ...assessment, token, revision };
+  }
+  cancelSoldierImport(token: string): void {
+    if (this.soldierPreview?.token === token) this.soldierPreview = undefined;
+  }
+  applySoldierImport(
+    revision: number,
+    token: string,
+    mode: 'add' | 'replace',
+    target?: number,
+  ): void {
+    if (!this.editing) throw new Error('Enable editing first');
+    const pending = this.soldierPreview;
+    if (
+      !pending ||
+      token !== pending.token ||
+      revision !== this.revision ||
+      pending.revision !== this.revision
+    )
+      throw new Error('The import preview is stale. Open the soldier file again.');
+    const assessment = previewSoldierImport(this.appliedSave(), pending.package);
+    const destination = assessment.replacements.find((c) => c.objectIndex === target);
+    if (mode === 'replace' && !destination) throw new Error('Select a destination soldier');
+    const reasons = [
+      ...assessment.blockers,
+      ...(mode === 'add' ? assessment.add.blockers : destination!.blockers),
+    ];
+    if (reasons.length) throw new Error(reasons.join('\n'));
+    this.stageResearchImport(revision, pending.package, mode, target);
   }
   enable(): void {
     if (!this.save.canSave) throw new Error('Structural validation failed; this save is read only');
@@ -48,24 +164,24 @@ export class EditingSession {
     const next = createPatches(this.save, [...merged.values()], this.limits);
     if (JSON.stringify(next) === JSON.stringify(this.patches)) return;
     this.history = this.history.slice(0, this.position + 1);
-    this.history.push(next);
+    this.history.push({ ...this.history[this.position]!, patches: next });
     this.position++;
     this.revision++;
   }
   move(action: 'undo' | 'redo' | 'revert'): void {
     if (action === 'undo' && this.position > 0) this.position--;
     if (action === 'redo' && this.position < this.history.length - 1) this.position++;
-    if (action === 'revert' && this.patches.length) {
+    if (action === 'revert' && this.dirty) {
       this.history = this.history.slice(0, this.position + 1);
-      this.history.push([]);
+      this.history.push({ save: this.baseline, patches: [], imports: [] });
       this.position++;
     }
     this.revision++;
   }
   committed(path: string, save: GearsTacticsSave): void {
     this.path = path;
-    this.save = save;
-    this.history = [[]];
+    this.baseline = save;
+    this.history = [{ save, patches: [], imports: [] }];
     this.position = 0;
     this.revision++;
   }
@@ -74,6 +190,8 @@ export class EditingSession {
     return {
       id: this.id,
       revision: this.revision,
+      dirty: this.dirty,
+      structuralChanges: this.structuralChanges,
       path: this.path,
       filename: basename(this.path),
       size: bytes.length,

@@ -28,6 +28,8 @@ import Inspector from './components/Inspector';
 import Settings from './components/Settings';
 import Modal from './components/Modal';
 import { formatNumber } from './components/FieldEditor';
+import SoldierImport from './components/SoldierImport';
+import type { SoldierImportPreview } from '../shared/soldier';
 type Page = 'Overview' | 'Soldiers' | 'Campaign' | 'Raw Inspector';
 const unwrap = <T,>(result: Result<T>): T => {
   if (!result.ok) throw new Error(result.error);
@@ -51,8 +53,10 @@ export default function App() {
   const [changesOpen, setChangesOpen] = useState(false);
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [soldierImport, setSoldierImport] = useState<SoldierImportPreview | null>(null);
   const draftCount = Object.keys(drafts).length;
-  const hasChanges = Boolean(session?.patches.length || draftCount);
+  const hasChanges = Boolean(session?.dirty || draftCount);
+  const appliedCount = (session?.patches.length ?? 0) + (session?.structuralChanges.length ?? 0);
   async function run(action: () => Promise<void>) {
     setBusy(true);
     setError('');
@@ -138,6 +142,24 @@ export default function App() {
       accept(unwrap(await window.editor!.history(session.id, action)));
     });
   }
+  async function exportSoldier(index: number) {
+    if (!session) return;
+    await run(async () => {
+      const result = unwrap(
+        await window.editor!.exportSoldier(session.id, session.revision, index),
+      );
+      if (result) setMessage(`Soldier archive exported: ${result.path}`);
+    });
+  }
+  async function importSoldier() {
+    if (!session) return;
+    await run(async () => {
+      const result = unwrap(
+        await window.editor!.prepareSoldierImport(session.id, session.revision),
+      );
+      if (result) setSoldierImport(result);
+    });
+  }
   function drop(event: DragEvent) {
     event.preventDefault();
     setDragging(false);
@@ -201,9 +223,7 @@ export default function App() {
         <button className="side-action" disabled={!session} onClick={() => setChangesOpen(true)}>
           <ListChecks size={18} />
           Pending changes
-          <span className={session?.patches.length ? 'change-count' : 'count'}>
-            {session?.patches.length ?? 0}
-          </span>
+          <span className={appliedCount ? 'change-count' : 'count'}>{appliedCount}</span>
         </button>
         <div className="sidebar-bottom">
           <div className="local-card">
@@ -349,6 +369,9 @@ export default function App() {
                   developer={settings.developerMode}
                   drafts={drafts}
                   onDraft={draft}
+                  transferBusy={busy}
+                  onExport={(index) => void exportSoldier(index)}
+                  onImport={() => void importSoldier()}
                   onInspect={(id) => {
                     setInspected(id);
                     setPage('Raw Inspector');
@@ -438,7 +461,7 @@ export default function App() {
               </button>
               <button
                 className="button primary"
-                disabled={busy || draftCount > 0 || !session.canSave || !session.patches.length}
+                disabled={busy || draftCount > 0 || !session.canSave || !session.dirty}
                 onClick={() => setChangesOpen(true)}
               >
                 <Save size={15} />
@@ -482,14 +505,51 @@ export default function App() {
           }}
         />
       )}
+      {soldierImport && session && (
+        <SoldierImport
+          preview={soldierImport}
+          busy={busy}
+          onClose={() => {
+            if (busy) return;
+            void run(async () => {
+              unwrap(await window.editor!.cancelSoldierImport(session.id, soldierImport.token));
+              setSoldierImport(null);
+            });
+          }}
+          onApply={(mode, target) =>
+            void run(async () => {
+              accept(
+                unwrap(
+                  await window.editor!.applySoldierImport(
+                    session.id,
+                    soldierImport.revision,
+                    soldierImport.token,
+                    mode,
+                    target,
+                  ),
+                ),
+              );
+              setSoldierImport(null);
+              setSelected(undefined);
+              setChangesOpen(true);
+            })
+          }
+        />
+      )}
       {changesOpen && session && (
         <Modal title="Pending changes" onClose={() => setChangesOpen(false)}>
           <p className="muted">
-            Review the exact values that will be written. Unknown data and unrelated regions remain
-            byte-identical.
+            {session.structuralChanges.length
+              ? 'Review the staged edits and soldier imports. Imports rebuild the archive while preserving unrelated object data.'
+              : 'Review the exact values that will be written. Unknown data and unrelated regions remain byte-identical.'}
           </p>
-          {session.patches.length ? (
+          {session.dirty ? (
             <div className="patch-list">
+              {session.structuralChanges.map((label, index) => (
+                <div className="patch" key={`import-${index}`}>
+                  <strong>{label}</strong>
+                </div>
+              ))}
               {session.patches.map((p) => (
                 <div className="patch" key={p.offset}>
                   <strong>{p.label}</strong>
@@ -525,11 +585,11 @@ export default function App() {
             </button>
             <button
               className="button primary"
-              disabled={busy || draftCount > 0 || !session.canSave || !session.patches.length}
+              disabled={busy || draftCount > 0 || !session.canSave || !session.dirty}
               onClick={() => void save()}
             >
               <Save size={16} />
-              Save {session.patches.length} changes
+              Save {appliedCount} changes
             </button>
           </div>
         </Modal>

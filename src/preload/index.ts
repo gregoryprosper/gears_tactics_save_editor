@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { EditorApi } from '../shared/api';
 const api: EditorApi = {
+  exportSoldier: (id, revision, index) =>
+    ipcRenderer.invoke('editor:export-soldier', id, revision, index),
+  prepareSoldierImport: (id, revision) =>
+    ipcRenderer.invoke('editor:prepare-soldier-import', id, revision),
+  cancelSoldierImport: (id, token) => ipcRenderer.invoke('editor:cancel-soldier-import', id, token),
+  applySoldierImport: (id, revision, token, mode, target) =>
+    ipcRenderer.invoke('editor:apply-soldier-import', id, revision, token, mode, target),
   settings: () => ipcRenderer.invoke('editor:settings'),
   updateSettings: (settings) => ipcRenderer.invoke('editor:update-settings', settings),
   current: () => ipcRenderer.invoke('editor:current'),
