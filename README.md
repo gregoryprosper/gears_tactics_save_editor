@@ -6,7 +6,7 @@ An independent, local-only Electron + React + TypeScript desktop application for
 
 ## Install and run
 
-Download a packaged app from the [v0.1.0 release](https://github.com/gregoryprosper/gears_tactics_save_editor/releases/tag/v0.1.0). Electron is bundled; Node.js is not required:
+Download a packaged app from the [latest release](https://github.com/gregoryprosper/gears_tactics_save_editor/releases/latest). Electron is bundled; Node.js is not required:
 
 - **Windows x64:** choose the `windows-x64-setup.exe` installer or the `windows-x64-portable.exe` app to run without installation.
 - **macOS (Apple Silicon and Intel):** open the `macos-universal.dmg` and drag the app to Applications.
