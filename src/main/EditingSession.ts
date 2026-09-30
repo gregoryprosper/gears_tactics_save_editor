@@ -316,7 +316,8 @@ function flatten(properties: UnrealProperty[]): UnrealProperty[] {
 }
 /**
  * One view row per native equipment entry, with staged patch values overlaid so drafts
- * compare against what the save will contain. Options carry a same-kind precedent only.
+ * compare against what the save will contain. Options carry a same-kind precedent, with
+ * unclassified pieces (no observed kind) appended last.
  */
 function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): EquipmentSlotView[] {
   let catalog: ArmourCatalog;
@@ -356,6 +357,18 @@ function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): Equipment
   }
   for (const options of optionsByKind.values())
     options.sort((a, b) => (b.quantity ?? 0) - (a.quantity ?? 0) || (a.guid < b.guid ? -1 : 1));
+  // Pieces with no observed kind cannot be routed to a slot type, so every slot lists them;
+  // equipping one keeps the entry's existing kind byte (probe path for naming unknown pieces).
+  const unclassified: ArmourOption[] = [];
+  for (const definition of catalog.definitions.values()) {
+    if (catalog.kindOf.get(definition.guid) !== undefined) continue;
+    unclassified.push({
+      guid: definition.guid,
+      quantity: definition.quantity,
+      ...pieceLabels.get(definition.guid),
+    });
+  }
+  unclassified.sort((a, b) => (b.quantity ?? 0) - (a.quantity ?? 0) || (a.guid < b.guid ? -1 : 1));
   const views: EquipmentSlotView[] = [];
   for (const character of save.characters) {
     let entries: (EquipmentEntry | null)[];
@@ -379,7 +392,10 @@ function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): Equipment
         flag: entry?.flag ?? null,
         guid,
         resolvable: guid !== null && catalog.definitions.has(guid),
-        options: entry?.kind !== undefined ? (optionsByKind.get(entry.kind) ?? []) : [],
+        options:
+          entry?.kind !== undefined
+            ? [...(optionsByKind.get(entry.kind) ?? []), ...unclassified]
+            : [],
       });
     });
   }

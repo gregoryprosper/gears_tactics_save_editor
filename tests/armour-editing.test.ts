@@ -125,6 +125,34 @@ describe('armour patch transactions', () => {
     ).toBe(entry.guid);
   });
 
+  it('accepts pieces with no observed kind, listing them as options and keeping the kind byte', () => {
+    const catalog = armourCatalog(end);
+    const { character, slot, entry } = swappable();
+    const unclassified = [...catalog.definitions.keys()].find(
+      (guid) => catalog.kindOf.get(guid) === undefined,
+    );
+    expect(unclassified).toBeDefined();
+    const session = new EditingSession('/tmp/example', end, defaultLimits);
+    session.enable();
+    const options = session
+      .snapshot()
+      .equipment.find((s) => s.objectIndex === character.objectIndex && s.slot === slot)!
+      .options.find((o) => o.guid === unclassified);
+    expect(options?.kind).toBeUndefined();
+    session.apply(session.revision, [
+      {
+        objectIndex: character.objectIndex,
+        propertyName: `ArmourSlot:${slot}`,
+        value: unclassified!,
+      },
+    ]);
+    const reparsed = parse(session.output());
+    const swapped = readEquipmentEntries(reparsed, character.objectIndex)[slot]!;
+    expect(swapped.guid).toBe(unclassified);
+    expect(swapped.kind).toBe(entry.kind);
+    expect(swapped.flag).toBe(entry.flag);
+  });
+
   it('rejects cross-slot, unknown, malformed, empty-slot and non-character edits', () => {
     const save = end;
     const catalog = armourCatalog(save);
@@ -133,9 +161,10 @@ describe('armour patch transactions', () => {
     session.enable();
     const apply = (objectIndex: number, propertyName: string, value: string) =>
       session.apply(session.revision, [{ objectIndex, propertyName, value }]);
-    const otherKind = [...catalog.definitions.keys()].find(
-      (guid) => catalog.kindOf.get(guid) !== entry.kind,
-    )!;
+    const otherKind = [...catalog.definitions.keys()].find((guid) => {
+      const kind = catalog.kindOf.get(guid);
+      return kind !== undefined && kind !== entry.kind;
+    })!;
     expect(() => apply(character.objectIndex, `ArmourSlot:${slot}`, otherKind)).toThrow(
       /does not match this equipment slot/,
     );

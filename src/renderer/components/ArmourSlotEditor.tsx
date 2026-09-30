@@ -6,7 +6,8 @@ function optionLabel(option: ArmourOption): string {
   const name = option.name ?? shortGuid(option.guid);
   const rarity = option.rarity ? ` · ${option.rarity}` : '';
   const stock = option.quantity !== undefined ? ` · stock ${option.quantity}` : '';
-  return `${name}${rarity}${stock}`;
+  const classified = option.kind === undefined ? ' · unclassified' : '';
+  return `${name}${rarity}${stock}${classified}`;
 }
 export default function ArmourSlotEditor({
   slot,
@@ -31,6 +32,7 @@ export default function ArmourSlotEditor({
     : null;
   const currentRarity = currentOption?.rarity;
   const selectable = editing && slot.resolvable && slot.options.length > 0;
+  const unclassifiedCount = slot.options.filter((o) => o.kind === undefined).length;
   return (
     <div
       className={`stat-field ${draft !== undefined ? 'changed-field' : ''} ${
@@ -73,7 +75,9 @@ export default function ArmourSlotEditor({
                 ? 'No alternative pieces with a matching slot in this save'
                 : developer
                   ? `${slot.options.length} pieces · kind ${slot.kind} · entry flag ${slot.flag}`
-                  : `${slot.options.length} pieces with a matching slot`}
+                  : `${slot.options.length} pieces with a matching slot${
+                      unclassifiedCount > 0 ? ` · ${unclassifiedCount} unclassified` : ''
+                    }`}
       </small>
     </div>
   );

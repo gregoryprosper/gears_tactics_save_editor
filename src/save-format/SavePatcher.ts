@@ -67,8 +67,10 @@ export function warningAbove(name: string): number {
 }
 /**
  * An armour swap rewrites only the 16 GUID bytes of one native equipment entry. The replacement
- * GUID must be an armour definition of this save and must appear with the same kind byte on some
- * character entry, so every accepted swap has a same-slot precedent in the save being edited.
+ * GUID must be an armour definition of this save and, when its kind has been observed on some
+ * character entry, must match the slot's kind. Pieces never worn in this save have no observed
+ * kind; they are accepted deliberately (naming/probe passes) and keep the entry's kind byte,
+ * which is not part of the patch.
  */
 function armourPatch(save: GearsTacticsSave, edit: EditRequest, slot: number): SavePatch | null {
   if (typeof edit.value !== 'string') throw new Error(`Armour slot ${slot} requires a GUID value`);
@@ -82,7 +84,8 @@ function armourPatch(save: GearsTacticsSave, edit: EditRequest, slot: number): S
   const catalog = armourCatalog(save);
   if (!catalog.definitions.has(guid))
     throw new Error('The selected armour piece does not exist in this save');
-  if (catalog.kindOf.get(guid) !== entry.kind)
+  const observedKind = catalog.kindOf.get(guid);
+  if (observedKind !== undefined && observedKind !== entry.kind)
     throw new Error('The selected armour piece does not match this equipment slot');
   const newBytes = Buffer.from(guid, 'hex');
   const oldBytes = Buffer.from(entry.guid, 'hex');

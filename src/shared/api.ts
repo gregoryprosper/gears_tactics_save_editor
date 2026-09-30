@@ -41,6 +41,8 @@ export interface ArmourOption {
   name?: string;
   /** Rarity tier derived from the family member ordinal (Common…Legendary, Default). */
   rarity?: string;
+  /** Observed equipment-entry kind; undefined for pieces never worn in this save. */
+  kind?: number;
 }
 export interface EquipmentSlotView {
   objectIndex: number;
@@ -51,7 +53,10 @@ export interface EquipmentSlotView {
   guid: string | null;
   /** False when the GUID does not resolve against this save's armour inventory (slot 3 records). */
   resolvable: boolean;
-  /** Replacement pieces with a same-kind precedent in this save, owned stock first. */
+  /**
+   * Replacement pieces with a same-kind precedent in this save, owned stock first, followed by
+   * unclassified pieces (no observed kind) which keep the slot's kind byte when equipped.
+   */
   options: ArmourOption[];
 }
 export interface ObjectSummary {
