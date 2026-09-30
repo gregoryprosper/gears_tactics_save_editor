@@ -1,21 +1,25 @@
 import { parse, serialize } from './index';
 import type { GearsTacticsSave, UnrealProperty } from './types';
 import type { EditRequest } from '../shared/api';
+import { armourCatalog, cachedEquipmentEntries } from './NativeSoldier';
+export type SavePatchKind = 'scalar' | 'armour';
 export interface SavePatch {
+  kind: SavePatchKind;
   objectIndex: number;
   propertyName: string;
   description: string;
   offset: number;
   oldBytes: Buffer;
   newBytes: Buffer;
-  oldValue: number;
-  newValue: number;
+  oldValue: number | string;
+  newValue: number | string;
 }
 export interface EditLimits {
   abilityPointsMaximum: number;
 }
 export const defaultLimits: EditLimits = { abilityPointsMaximum: 2147483647 };
 const integers = new Set(['CurrentAbilityPoints', 'Health', 'Strength', 'MovementPoints']);
+export const ARMOUR_SLOT_PROPERTY = /^ArmourSlot:([0-3])$/;
 export function editableProperties(
   save: GearsTacticsSave,
 ): { objectIndex: number; property: UnrealProperty }[] {
@@ -61,6 +65,41 @@ export function warningAbove(name: string): number {
     )[name] ?? 1000
   );
 }
+/**
+ * An armour swap rewrites only the 16 GUID bytes of one native equipment entry. The replacement
+ * GUID must be an armour definition of this save and must appear with the same kind byte on some
+ * character entry, so every accepted swap has a same-slot precedent in the save being edited.
+ */
+function armourPatch(save: GearsTacticsSave, edit: EditRequest, slot: number): SavePatch | null {
+  if (typeof edit.value !== 'string') throw new Error(`Armour slot ${slot} requires a GUID value`);
+  const guid = edit.value.toLowerCase();
+  if (!/^[0-9a-f]{32}$/.test(guid)) throw new Error(`Invalid armour GUID for slot ${slot}`);
+  const object = save.objects[edit.objectIndex];
+  if (!object?.classPath.endsWith('.GanderCharacterData'))
+    throw new Error('Armour edits require a character object');
+  const entry = cachedEquipmentEntries(save, edit.objectIndex)[slot] ?? null;
+  if (!entry) throw new Error(`Armour slot ${slot} is empty for this character`);
+  const catalog = armourCatalog(save);
+  if (!catalog.definitions.has(guid))
+    throw new Error('The selected armour piece does not exist in this save');
+  if (catalog.kindOf.get(guid) !== entry.kind)
+    throw new Error('The selected armour piece does not match this equipment slot');
+  const newBytes = Buffer.from(guid, 'hex');
+  const oldBytes = Buffer.from(entry.guid, 'hex');
+  if (newBytes.equals(oldBytes)) return null;
+  const character = save.characters.find((c) => c.objectIndex === edit.objectIndex);
+  return {
+    kind: 'armour',
+    objectIndex: edit.objectIndex,
+    propertyName: edit.propertyName,
+    description: `${character?.displayName ?? `Character #${edit.objectIndex}`} · Armour slot ${slot}`,
+    offset: entry.guidOffset,
+    oldBytes,
+    newBytes,
+    oldValue: entry.guid,
+    newValue: guid,
+  };
+}
 export function createPatches(
   save: GearsTacticsSave,
   edits: EditRequest[],
@@ -83,12 +122,19 @@ export function createPatches(
     const key = `${edit.objectIndex}:${edit.propertyName}`;
     if (seen.has(key)) throw new Error(`Duplicate edit for ${key}`);
     seen.add(key);
+    const armour = ARMOUR_SLOT_PROPERTY.exec(edit.propertyName);
+    if (armour) {
+      const patch = armourPatch(save, edit, Number(armour[1]));
+      if (patch) result.push(patch);
+      continue;
+    }
     const found = allowed.find(
       (e) => e.objectIndex === edit.objectIndex && e.property.name === edit.propertyName,
     );
     if (!found) throw new Error(`Property ${key} is not an editable, validated scalar`);
     const p = found.property;
     if (
+      typeof edit.value !== 'number' ||
       !Number.isFinite(edit.value) ||
       edit.value < 0 ||
       edit.value > maximumFor(p, limits) ||
@@ -103,6 +149,7 @@ export function createPatches(
     if (newBytes.equals(p.rawValue)) continue;
     const character = save.characters.find((c) => c.objectIndex === edit.objectIndex);
     result.push({
+      kind: 'scalar',
       objectIndex: edit.objectIndex,
       propertyName: p.name,
       description: `${character?.displayName ?? 'Campaign'} · ${p.name}`,
@@ -143,7 +190,7 @@ function structure(save: GearsTacticsSave): string {
     top: properties(save.properties),
   });
 }
-/** Only exact allowlisted four-byte replacements. Caller-provided offsets/bytes are never trusted. */
+/** Only exact allowlisted fixed-width replacements. Caller-provided offsets/bytes are never trusted. */
 export function applyPatches(
   save: GearsTacticsSave,
   patches: SavePatch[],
@@ -163,7 +210,10 @@ export function applyPatches(
     patches.some((p, i) => {
       const v = verified[i]!;
       return (
-        p.offset !== v.offset || !p.oldBytes.equals(v.oldBytes) || !p.newBytes.equals(v.newBytes)
+        p.kind !== v.kind ||
+        p.offset !== v.offset ||
+        !p.oldBytes.equals(v.oldBytes) ||
+        !p.newBytes.equals(v.newBytes)
       );
     })
   )
@@ -172,13 +222,16 @@ export function applyPatches(
   const output = Buffer.from(original);
   let previousEnd = 0;
   for (const patch of verified) {
+    const width = patch.newBytes.length;
+    if (patch.oldBytes.length !== width || width < 1)
+      throw new Error(`Unsupported patch width: ${patch.description}`);
     if (
       patch.offset < previousEnd ||
-      !original.subarray(patch.offset, patch.offset + 4).equals(patch.oldBytes)
+      !original.subarray(patch.offset, patch.offset + width).equals(patch.oldBytes)
     )
       throw new Error('Overlapping or stale patch');
     patch.newBytes.copy(output, patch.offset);
-    previousEnd = patch.offset + 4;
+    previousEnd = patch.offset + width;
   }
   validateOutput(save, output, verified);
   return output;
@@ -192,14 +245,15 @@ export function validateOutput(
   if (output.length !== original.length) throw new Error('Save length changed');
   let cursor = 0;
   for (const p of patches) {
+    const width = p.newBytes.length;
     if (
       p.offset < cursor ||
       !output.subarray(cursor, p.offset).equals(original.subarray(cursor, p.offset))
     )
       throw new Error('Unrelated bytes changed');
-    if (!output.subarray(p.offset, p.offset + 4).equals(p.newBytes))
+    if (!output.subarray(p.offset, p.offset + width).equals(p.newBytes))
       throw new Error(`Patch verification failed: ${p.description}`);
-    cursor = p.offset + 4;
+    cursor = p.offset + width;
   }
   if (!output.subarray(cursor).equals(original.subarray(cursor)))
     throw new Error('Unrelated trailing bytes changed');
@@ -207,11 +261,18 @@ export function validateOutput(
   if (!reparsed.canSave || structure(reparsed) !== structure(save))
     throw new Error('Structural validation failed after patching');
   for (const patch of patches) {
-    const property = reparsed.objects[patch.objectIndex]?.properties.find(
-      (p) => p.name === patch.propertyName && p.valueOffset === patch.offset,
-    );
-    if (!property || property.value !== patch.newValue)
-      throw new Error(`Edited value failed to reparse: ${patch.description}`);
+    if (patch.kind === 'armour') {
+      const slot = Number(ARMOUR_SLOT_PROPERTY.exec(patch.propertyName)![1]);
+      const entry = cachedEquipmentEntries(reparsed, patch.objectIndex)[slot] ?? null;
+      if (!entry || entry.guid !== patch.newValue)
+        throw new Error(`Edited value failed to reparse: ${patch.description}`);
+    } else {
+      const property = reparsed.objects[patch.objectIndex]?.properties.find(
+        (p) => p.name === patch.propertyName && p.valueOffset === patch.offset,
+      );
+      if (!property || property.value !== patch.newValue)
+        throw new Error(`Edited value failed to reparse: ${patch.description}`);
+    }
   }
   return reparsed;
 }

@@ -10,7 +10,21 @@ import {
   type SavePatch,
   type EditLimits,
 } from '../save-format/SavePatcher';
-import type { EditRequest, SessionView, ObjectDetail, PropertyView } from '../shared/api';
+import type {
+  ArmourOption,
+  EditRequest,
+  EquipmentSlotView,
+  SessionView,
+  ObjectDetail,
+  PropertyView,
+} from '../shared/api';
+import {
+  armourCatalog,
+  cachedEquipmentEntries,
+  type ArmourCatalog,
+  type EquipmentEntry,
+} from '../save-format/NativeSoldier';
+import { armourFamilyName, armourRarityLabel } from '../shared/armour-names';
 import {
   exportSoldier,
   previewSoldierImport,
@@ -200,8 +214,8 @@ export class EditingSession {
       campaign: {
         ...this.save.campaign,
         rosterCapacity:
-          this.patches.find((p) => p.propertyName === 'SoldierRosterSize')?.newValue ??
-          this.save.campaign.rosterCapacity,
+          (this.patches.find((p) => p.kind === 'scalar' && p.propertyName === 'SoldierRosterSize')
+            ?.newValue as number | undefined) ?? this.save.campaign.rosterCapacity,
       },
       characters: this.save.characters.map((c) => ({
         ...c,
@@ -209,8 +223,8 @@ export class EditingSession {
           ...c.stats,
           ...Object.fromEntries(
             this.patches
-              .filter((p) => p.objectIndex === c.objectIndex)
-              .map((p) => [p.propertyName, p.newValue]),
+              .filter((p) => p.kind === 'scalar' && p.objectIndex === c.objectIndex)
+              .map((p) => [p.propertyName, p.newValue as number]),
           ),
         },
       })),
@@ -234,17 +248,22 @@ export class EditingSession {
         type: p.type,
         originalValue: p.value as number,
         value:
-          this.patches.find(
-            (patch) => patch.objectIndex === objectIndex && patch.propertyName === p.name,
-          )?.newValue ?? (p.value as number),
+          (this.patches.find(
+            (patch) =>
+              patch.kind === 'scalar' &&
+              patch.objectIndex === objectIndex &&
+              patch.propertyName === p.name,
+          )?.newValue as number | undefined) ?? (p.value as number),
         valueOffset: p.valueOffset,
         minimum: 0,
         maximum: maximumFor(p, this.limits),
         warningAbove: warningAbove(p.name),
       })),
+      equipment: equipmentViews(this.save, this.patches),
       patches: this.patches.map((p) => ({
         objectIndex: p.objectIndex,
         propertyName: p.propertyName,
+        kind: p.kind,
         label: p.description,
         oldValue: p.oldValue,
         newValue: p.newValue,
@@ -294,6 +313,77 @@ export class EditingSession {
 }
 function flatten(properties: UnrealProperty[]): UnrealProperty[] {
   return properties.flatMap((p) => [p, ...flatten(p.children ?? [])]);
+}
+/**
+ * One view row per native equipment entry, with staged patch values overlaid so drafts
+ * compare against what the save will contain. Options carry a same-kind precedent only.
+ */
+function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): EquipmentSlotView[] {
+  let catalog: ArmourCatalog;
+  try {
+    catalog = armourCatalog(save);
+  } catch {
+    return [];
+  }
+  // Family metadata: one family per armour piece; members are rarity tiers sharing a
+  // 12-byte GUID base, ordered by the counter byte. Names come from the calibrated table.
+  const families = new Map<string, string[]>();
+  for (const definition of catalog.definitions.values()) {
+    const key = definition.guid.slice(0, 24);
+    if (!families.has(key)) families.set(key, []);
+    families.get(key)!.push(definition.guid);
+  }
+  const pieceLabels = new Map<string, { name?: string; rarity?: string }>();
+  for (const members of families.values()) {
+    members.sort((a, b) => parseInt(a.slice(24, 26), 16) - parseInt(b.slice(24, 26), 16));
+    members.forEach((guid, ordinal) => {
+      pieceLabels.set(guid, {
+        name: armourFamilyName(guid),
+        rarity: armourRarityLabel(ordinal, members.length),
+      });
+    });
+  }
+  const optionsByKind = new Map<number, ArmourOption[]>();
+  for (const definition of catalog.definitions.values()) {
+    const kind = catalog.kindOf.get(definition.guid);
+    if (kind === undefined || kind < 0) continue;
+    if (!optionsByKind.has(kind)) optionsByKind.set(kind, []);
+    optionsByKind.get(kind)!.push({
+      guid: definition.guid,
+      quantity: definition.quantity,
+      ...pieceLabels.get(definition.guid),
+    });
+  }
+  for (const options of optionsByKind.values())
+    options.sort((a, b) => (b.quantity ?? 0) - (a.quantity ?? 0) || (a.guid < b.guid ? -1 : 1));
+  const views: EquipmentSlotView[] = [];
+  for (const character of save.characters) {
+    let entries: (EquipmentEntry | null)[];
+    try {
+      entries = cachedEquipmentEntries(save, character.objectIndex);
+    } catch {
+      continue;
+    }
+    entries.forEach((entry, slot) => {
+      const staged = patches.find(
+        (p) =>
+          p.kind === 'armour' &&
+          p.objectIndex === character.objectIndex &&
+          p.propertyName === `ArmourSlot:${slot}`,
+      )?.newValue;
+      const guid = typeof staged === 'string' ? staged : (entry?.guid ?? null);
+      views.push({
+        objectIndex: character.objectIndex,
+        slot,
+        kind: entry?.kind ?? null,
+        flag: entry?.flag ?? null,
+        guid,
+        resolvable: guid !== null && catalog.definitions.has(guid),
+        options: entry?.kind !== undefined ? (optionsByKind.get(entry.kind) ?? []) : [],
+      });
+    });
+  }
+  return views;
 }
 export function hex(buffer: Buffer): string {
   return buffer.toString('hex').match(/.{2}/g)?.join(' ') ?? '';

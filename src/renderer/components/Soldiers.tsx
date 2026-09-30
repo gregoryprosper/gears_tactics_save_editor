@@ -4,7 +4,9 @@ import type { SessionView } from '../../shared/api';
 import { ClassMark } from './Overview';
 import FieldEditor from './FieldEditor';
 import LearnedSkills from './LearnedSkills';
+import ArmourSlotEditor from './ArmourSlotEditor';
 export const fieldKey = (index: number, name: string) => `${index}:${name}`;
+export const equipmentKey = (index: number, slot: number) => `equip:${index}:${slot}`;
 export default function Soldiers({
   session: s,
   selected,
@@ -129,19 +131,21 @@ export default function Soldiers({
             </span>
           </div>
           <div className="tabs" role="tablist">
-            {['Stats', 'Skills', 'Identity', ...(developer ? ['Internals'] : [])].map((name) => (
-              <button
-                key={name}
-                role="tab"
-                aria-selected={tab === name}
-                onClick={() => setTab(name)}
-              >
-                {name}
-                {name === 'Skills' && character.learnedSkills && (
-                  <span>{character.learnedSkills.nodes.length}</span>
-                )}
-              </button>
-            ))}
+            {['Stats', 'Equipment', 'Skills', 'Identity', ...(developer ? ['Internals'] : [])].map(
+              (name) => (
+                <button
+                  key={name}
+                  role="tab"
+                  aria-selected={tab === name}
+                  onClick={() => setTab(name)}
+                >
+                  {name}
+                  {name === 'Skills' && character.learnedSkills && (
+                    <span>{character.learnedSkills.nodes.length}</span>
+                  )}
+                </button>
+              ),
+            )}
           </div>
           <div className="soldier-content">
             {tab === 'Stats' && (
@@ -196,6 +200,41 @@ export default function Soldiers({
                   </div>
                   <LockKeyhole size={14} />
                   <span>Advanced · read only</span>
+                </div>
+              </>
+            )}
+            {tab === 'Equipment' && (
+              <>
+                <div className="section-caption">
+                  <div>
+                    <h3>Armour</h3>
+                    <p>
+                      Native equipment entries resolved against this save's armour inventory. Swaps
+                      rewrite the piece identifier only.
+                    </p>
+                  </div>
+                  <span className={`tag ${s.editing ? 'success' : 'neutral'}`}>
+                    {s.editing ? 'EDITING ENABLED' : 'READ ONLY'}
+                  </span>
+                </div>
+                <div className="stats-grid">
+                  {s.equipment
+                    .filter((slot) => slot.objectIndex === character.objectIndex)
+                    .map((slot) => (
+                      <ArmourSlotEditor
+                        key={slot.slot}
+                        slot={slot}
+                        editing={s.editing}
+                        developer={developer}
+                        draft={drafts[equipmentKey(slot.objectIndex, slot.slot)]}
+                        onChange={(v) => onDraft(equipmentKey(slot.objectIndex, slot.slot), v)}
+                      />
+                    ))}
+                </div>
+                <div className="inline-note">
+                  Only pieces already used in the same equipment slot across this save are offered.
+                  Inventory quantities are never adjusted. Slot 4 records are internal to the
+                  character and cannot be resolved to an inventory piece.
                 </div>
               </>
             )}

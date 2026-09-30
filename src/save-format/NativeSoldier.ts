@@ -160,6 +160,160 @@ export interface NativeRoster {
   groupEndOffsets: number[];
   groups: { objectIndex: number; hero: number; referenceOffset: number }[][];
 }
+
+export interface EquipmentEntry {
+  guid: string;
+  kind: number;
+  flag: number;
+  presentOffset: number;
+  guidOffset: number;
+  kindOffset: number;
+  flagOffset: number;
+}
+
+/**
+ * Decodes the four native equipment entries of one character with absolute byte offsets,
+ * validating the complete suffix so the recorded offsets cannot describe a misaligned layout.
+ * Armour swapping only rewrites the 16 GUID bytes; kind/flag bytes are never relocated.
+ */
+export function readEquipmentEntries(
+  save: GearsTacticsSave,
+  objectIndex: number,
+): (EquipmentEntry | null)[] {
+  const object = save.objects[objectIndex];
+  const frame = object?.body;
+  if (!object || !frame || !object.classPath.endsWith('.GanderCharacterData'))
+    throw new Error('Equipment entries require a character object with a body');
+  const r = new BinaryReader(serialize(save), frame.bodyOffset, frame.endOffset);
+  const campaign = readFrame(r, frame.rootBase, save.objects.length);
+  const inventory = readFrame(r, frame.rootBase, save.objects.length);
+  if (!campaign || !inventory) throw new Error('Missing native character context');
+  readPropertyList(r);
+  if (r.i32() !== 0) r.fail('Unsupported character property terminator/GUID');
+  const entries = Array.from({ length: 4 }, (): EquipmentEntry | null => {
+    const presentOffset = r.offset;
+    const present = r.i32();
+    if (present === 0) return null;
+    if (present !== 1) r.fail('Invalid equipment entry presence flag');
+    const guidOffset = r.offset;
+    const guid = r.bytes(16).toString('hex');
+    const kindOffset = r.offset;
+    const kind = r.u8();
+    const flagOffset = r.offset;
+    const flag = r.i32();
+    if (flag !== 0 && flag !== 1) r.fail('Invalid equipment entry flag');
+    return { guid, kind, flag, presentOffset, guidOffset, kindOffset, flagOffset };
+  });
+  const weapons: NativeSoldier['weapons'] = Array.from({ length: 4 }, () => {
+    const reference = readFrame(r, frame.rootBase, save.objects.length);
+    if (!reference) return { reference: null };
+    const flag = r.i32();
+    if (flag !== 0 && flag !== 1) r.fail('Invalid weapon reference flag');
+    return { reference: String(reference.index), flag };
+  });
+  for (const weapon of weapons) {
+    if (!weapon.reference) continue;
+    const weaponCampaign = readFrame(r, frame.rootBase, save.objects.length);
+    const weaponInventory = readFrame(r, frame.rootBase, save.objects.length);
+    if (
+      !weaponCampaign ||
+      !weaponInventory ||
+      weaponCampaign.index !== campaign.index ||
+      weaponInventory.index !== inventory.index
+    )
+      throw new Error('Weapon context differs from its soldier');
+    if (r.count(7) !== 7) throw new Error('Unsupported weapon modification layout');
+    for (let slot = 0; slot < 7; slot++) {
+      const kind = r.u8();
+      if (kind === 7) continue;
+      if (kind !== slot) throw new Error('Weapon modification slot does not match its index');
+      r.bytes(16);
+      const flag = r.i32();
+      if (flag !== 0 && flag !== 1) r.fail('Invalid weapon modification flag');
+    }
+  }
+  const count = r.count(128);
+  for (let i = 0; i < count; i++)
+    for (let j = 0; j < 3; j++) readFrame(r, frame.rootBase, save.objects.length);
+  const orderCount = r.count(128);
+  const skillOrder = Array.from({ length: orderCount }, () => r.i32());
+  if (
+    orderCount !== count ||
+    new Set(skillOrder).size !== orderCount ||
+    skillOrder.some((v) => v < 0 || v >= 128)
+  )
+    throw new Error('Skill tree ordering contains invalid or repeated nodes');
+  const slotCapacity = r.count(64),
+    slotCount = r.count(64);
+  if (slotCapacity !== slotCount || ![10, 21].includes(slotCount))
+    throw new Error('Unsupported native card-slot layout');
+  const slots = Array.from(
+    { length: slotCount },
+    () => readFrame(r, frame.rootBase, save.objects.length)?.index,
+  );
+  if (slots.some((slot) => slot === undefined) || new Set(slots).size !== slots.length)
+    r.fail('Missing or duplicate native card slots');
+  for (let i = 0; i < 5; i++) readFrame(r, frame.rootBase, save.objects.length);
+  if (r.offset !== r.end) r.fail('Unmapped native soldier suffix');
+  return entries;
+}
+
+const equipmentCache = new WeakMap<GearsTacticsSave, Map<number, (EquipmentEntry | null)[]>>();
+/** Memoized per save state; throws for characters whose suffix cannot be fully validated. */
+export function cachedEquipmentEntries(
+  save: GearsTacticsSave,
+  objectIndex: number,
+): (EquipmentEntry | null)[] {
+  let known = equipmentCache.get(save);
+  if (!known) {
+    known = new Map();
+    equipmentCache.set(save, known);
+  }
+  const cached = known.get(objectIndex);
+  if (cached) return cached;
+  const entries = readEquipmentEntries(save, objectIndex);
+  known.set(objectIndex, entries);
+  return entries;
+}
+
+export interface ArmourCatalog {
+  /** Armour inventory definitions by GUID (category 'armour' only). */
+  definitions: Map<string, InventoryDefinition>;
+  /** Kind observed for each equipped GUID; -1 marks the ambiguous GUIDs options must exclude. */
+  kindOf: Map<string, number>;
+}
+const armourCatalogs = new WeakMap<GearsTacticsSave, ArmourCatalog>();
+/**
+ * Armour definitions plus the kind each GUID is observed with across all character entries.
+ * Equipped GUIDs partition cleanly by kind, so a replacement GUID is slot-safe only when it
+ * carries a same-kind precedent in this save.
+ */
+export function armourCatalog(save: GearsTacticsSave): ArmourCatalog {
+  const cached = armourCatalogs.get(save);
+  if (cached) return cached;
+  const definitions = new Map<string, InventoryDefinition>();
+  for (const definition of readInventoryDefinitions(save))
+    if (definition.category === 'armour' && !definitions.has(definition.guid))
+      definitions.set(definition.guid, definition);
+  const kindOf = new Map<string, number>();
+  for (const object of save.objects) {
+    if (!object.body || !object.classPath.endsWith('.GanderCharacterData')) continue;
+    let entries: (EquipmentEntry | null)[] | undefined;
+    try {
+      entries = cachedEquipmentEntries(save, object.index);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry) continue;
+      const known = kindOf.get(entry.guid);
+      kindOf.set(entry.guid, known === undefined ? entry.kind : known === entry.kind ? known : -1);
+    }
+  }
+  const catalog = { definitions, kindOf };
+  armourCatalogs.set(save, catalog);
+  return catalog;
+}
 export function readNativeRoster(save: GearsTacticsSave): NativeRoster {
   const candidates = save.objects.filter((o) => o.classPath.includes('GanderCharacterRoster'));
   if (candidates.length !== 1 || !candidates[0]!.body) throw new Error('Ambiguous roster layout');
