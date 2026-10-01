@@ -10,7 +10,24 @@ import {
   type SavePatch,
   type EditLimits,
 } from '../save-format/SavePatcher';
-import type { EditRequest, SessionView, ObjectDetail, PropertyView } from '../shared/api';
+import type {
+  ArmourOption,
+  EditRequest,
+  EquipmentSlotView,
+  SessionView,
+  ObjectDetail,
+  PropertyView,
+} from '../shared/api';
+import {
+  armourCatalog,
+  cachedEquipmentEntries,
+  type ArmourCatalog,
+  type EquipmentEntry,
+} from '../save-format/NativeSoldier';
+import { armourFamilyName, armourRarityLabel, singletonRarity } from '../shared/armour-names';
+import { equipmentSlotRecords } from '../save-format/NativeSoldier';
+import { equipIntoEmptySlot, SLOT_KINDS } from '../save-format/EquipmentStructural';
+import { ARMOUR_SLOT_PROPERTY } from '../save-format/SavePatcher';
 import {
   exportSoldier,
   previewSoldierImport,
@@ -148,23 +165,83 @@ export class EditingSession {
     if (!this.editing) throw new Error('Enable editing first');
     if (revision !== this.revision)
       throw new Error('The editing session changed. Refresh and try again.');
-    const merged = new Map<string, EditRequest>(
-      this.patches.map((p) => [
-        `${p.objectIndex}:${p.propertyName}`,
-        { objectIndex: p.objectIndex, propertyName: p.propertyName, value: p.newValue },
-      ]),
-    );
+    // ArmourSlot edits on EMPTY slots are structural inserts (21 bytes into the character
+    // suffix), not fixed-width swaps. They stage through the rebuild path like imports;
+    // remaining edits rebase across the rebuild's object-index remap.
+    const structural: { edit: EditRequest; slot: number; guid: string }[] = [];
+    const fixed: EditRequest[] = [];
     const seen = new Set<string>();
-    for (const c of changes) {
-      const key = `${c.objectIndex}:${c.propertyName}`;
+    for (const change of changes) {
+      const key = `${change.objectIndex}:${change.propertyName}`;
       if (seen.has(key)) throw new Error('Duplicate change');
       seen.add(key);
-      merged.set(key, c);
+      const match = ARMOUR_SLOT_PROPERTY.exec(change.propertyName);
+      if (match && typeof change.value === 'string' && Number(match[1]) <= 2) {
+        let empty = false;
+        try {
+          empty = !equipmentSlotRecords(this.save, change.objectIndex)[Number(match[1])]?.entry;
+        } catch {
+          empty = false; // non-character objects fall through to the fixed-width rejection
+        }
+        if (empty) {
+          structural.push({
+            edit: change,
+            slot: Number(match[1]),
+            guid: change.value.toLowerCase(),
+          });
+          continue;
+        }
+      }
+      fixed.push(change);
     }
-    const next = createPatches(this.save, [...merged.values()], this.limits);
-    if (JSON.stringify(next) === JSON.stringify(this.patches)) return;
+    if (!structural.length) {
+      const merged = new Map<string, EditRequest>(
+        this.patches.map((p) => [
+          `${p.objectIndex}:${p.propertyName}`,
+          { objectIndex: p.objectIndex, propertyName: p.propertyName, value: p.newValue },
+        ]),
+      );
+      for (const c of fixed) merged.set(`${c.objectIndex}:${c.propertyName}`, c);
+      const next = createPatches(this.save, [...merged.values()], this.limits);
+      if (JSON.stringify(next) === JSON.stringify(this.patches)) return;
+      this.history = this.history.slice(0, this.position + 1);
+      this.history.push({ ...this.history[this.position]!, patches: next });
+      this.position++;
+      this.revision++;
+      return;
+    }
+    const imports = [
+      ...this.structuralChanges,
+      ...this.patches.map(
+        (p) => `${p.description}: ${p.oldValue} → ${p.newValue} (applied before equip)`,
+      ),
+    ];
+    let working = this.appliedSave();
+    let rebase = new Map<number, number>(
+      working.characters.map((c) => [c.objectIndex, c.objectIndex]),
+    );
+    for (const equip of structural) {
+      const objectIndex = rebase.get(equip.edit.objectIndex);
+      if (objectIndex === undefined)
+        throw new Error('The editing session changed. Refresh and try again.');
+      const result = equipIntoEmptySlot(working, objectIndex, equip.slot, equip.guid);
+      imports.push(
+        `Equip ${armourFamilyName(equip.guid) ?? equip.guid.slice(0, 8)} · Armour slot ${
+          equip.slot
+        } · ${result.save.characters.find((c) => c.objectIndex === result.objectIndex)?.displayName ?? `#${result.objectIndex}`}`,
+      );
+      working = result.save;
+      rebase = result.indices;
+    }
+    const rebased = fixed.map((edit) => {
+      const objectIndex = rebase.get(edit.objectIndex);
+      if (objectIndex === undefined)
+        throw new Error('The editing session changed. Refresh and try again.');
+      return { ...edit, objectIndex };
+    });
+    const patches = createPatches(working, rebased, this.limits);
     this.history = this.history.slice(0, this.position + 1);
-    this.history.push({ ...this.history[this.position]!, patches: next });
+    this.history.push({ save: working, patches, imports });
     this.position++;
     this.revision++;
   }
@@ -200,8 +277,8 @@ export class EditingSession {
       campaign: {
         ...this.save.campaign,
         rosterCapacity:
-          this.patches.find((p) => p.propertyName === 'SoldierRosterSize')?.newValue ??
-          this.save.campaign.rosterCapacity,
+          (this.patches.find((p) => p.kind === 'scalar' && p.propertyName === 'SoldierRosterSize')
+            ?.newValue as number | undefined) ?? this.save.campaign.rosterCapacity,
       },
       characters: this.save.characters.map((c) => ({
         ...c,
@@ -209,8 +286,8 @@ export class EditingSession {
           ...c.stats,
           ...Object.fromEntries(
             this.patches
-              .filter((p) => p.objectIndex === c.objectIndex)
-              .map((p) => [p.propertyName, p.newValue]),
+              .filter((p) => p.kind === 'scalar' && p.objectIndex === c.objectIndex)
+              .map((p) => [p.propertyName, p.newValue as number]),
           ),
         },
       })),
@@ -234,17 +311,22 @@ export class EditingSession {
         type: p.type,
         originalValue: p.value as number,
         value:
-          this.patches.find(
-            (patch) => patch.objectIndex === objectIndex && patch.propertyName === p.name,
-          )?.newValue ?? (p.value as number),
+          (this.patches.find(
+            (patch) =>
+              patch.kind === 'scalar' &&
+              patch.objectIndex === objectIndex &&
+              patch.propertyName === p.name,
+          )?.newValue as number | undefined) ?? (p.value as number),
         valueOffset: p.valueOffset,
         minimum: 0,
         maximum: maximumFor(p, this.limits),
         warningAbove: warningAbove(p.name),
       })),
+      equipment: equipmentViews(this.save, this.patches),
       patches: this.patches.map((p) => ({
         objectIndex: p.objectIndex,
         propertyName: p.propertyName,
+        kind: p.kind,
         label: p.description,
         oldValue: p.oldValue,
         newValue: p.newValue,
@@ -294,6 +376,95 @@ export class EditingSession {
 }
 function flatten(properties: UnrealProperty[]): UnrealProperty[] {
   return properties.flatMap((p) => [p, ...flatten(p.children ?? [])]);
+}
+/**
+ * One view row per native equipment entry, with staged patch values overlaid so drafts
+ * compare against what the save will contain. Options carry a same-kind precedent, with
+ * unclassified pieces (no observed kind) appended last.
+ */
+function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): EquipmentSlotView[] {
+  let catalog: ArmourCatalog;
+  try {
+    catalog = armourCatalog(save);
+  } catch {
+    return [];
+  }
+  // Family metadata: one family per armour piece; members are rarity tiers sharing a
+  // 12-byte GUID base, ordered by the counter byte. Names come from the calibrated table.
+  const families = new Map<string, string[]>();
+  for (const definition of catalog.definitions.values()) {
+    const key = definition.guid.slice(0, 24);
+    if (!families.has(key)) families.set(key, []);
+    families.get(key)!.push(definition.guid);
+  }
+  const pieceLabels = new Map<string, { name?: string; rarity?: string }>();
+  for (const members of families.values()) {
+    members.sort((a, b) => parseInt(a.slice(24, 26), 16) - parseInt(b.slice(24, 26), 16));
+    members.forEach((guid, ordinal) => {
+      pieceLabels.set(guid, {
+        name: armourFamilyName(guid),
+        rarity: armourRarityLabel(ordinal, members.length) ?? singletonRarity(guid),
+      });
+    });
+  }
+  const optionsByKind = new Map<number, ArmourOption[]>();
+  for (const definition of catalog.definitions.values()) {
+    const kind = catalog.kindOf.get(definition.guid);
+    if (kind === undefined || kind < 0) continue;
+    if (!optionsByKind.has(kind)) optionsByKind.set(kind, []);
+    optionsByKind.get(kind)!.push({
+      guid: definition.guid,
+      quantity: definition.quantity,
+      ...pieceLabels.get(definition.guid),
+    });
+  }
+  for (const options of optionsByKind.values())
+    options.sort((a, b) => (b.quantity ?? 0) - (a.quantity ?? 0) || (a.guid < b.guid ? -1 : 1));
+  // Pieces with no observed kind cannot be routed to a slot type, so every slot lists them;
+  // equipping one keeps the entry's existing kind byte (probe path for naming unknown pieces).
+  const unclassified: ArmourOption[] = [];
+  for (const definition of catalog.definitions.values()) {
+    if (catalog.kindOf.get(definition.guid) !== undefined) continue;
+    unclassified.push({
+      guid: definition.guid,
+      quantity: definition.quantity,
+      ...pieceLabels.get(definition.guid),
+    });
+  }
+  unclassified.sort((a, b) => (b.quantity ?? 0) - (a.quantity ?? 0) || (a.guid < b.guid ? -1 : 1));
+  const views: EquipmentSlotView[] = [];
+  for (const character of save.characters) {
+    let entries: (EquipmentEntry | null)[];
+    try {
+      entries = cachedEquipmentEntries(save, character.objectIndex);
+    } catch {
+      continue;
+    }
+    entries.forEach((entry, slot) => {
+      const staged = patches.find(
+        (p) =>
+          p.kind === 'armour' &&
+          p.objectIndex === character.objectIndex &&
+          p.propertyName === `ArmourSlot:${slot}`,
+      )?.newValue;
+      const guid = typeof staged === 'string' ? staged : (entry?.guid ?? null);
+      // Empty slots carry no kind; their options come from the slot position instead.
+      const optionKind = entry?.kind ?? (slot <= 2 ? SLOT_KINDS[slot] : undefined);
+      views.push({
+        objectIndex: character.objectIndex,
+        slot,
+        kind: entry?.kind ?? null,
+        flag: entry?.flag ?? null,
+        guid,
+        resolvable: guid !== null && catalog.definitions.has(guid),
+        options:
+          optionKind === undefined
+            ? []
+            : [...(optionsByKind.get(optionKind) ?? []), ...unclassified],
+      });
+    });
+  }
+  return views;
 }
 export function hex(buffer: Buffer): string {
   return buffer.toString('hex').match(/.{2}/g)?.join(' ') ?? '';

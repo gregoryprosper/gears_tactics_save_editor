@@ -1,6 +1,6 @@
 {
   "name": "gears-tactics-save-editor",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local, lossless Gears Tactics save inspection and bounded scalar editing",
   "private": true,
   "type": "module",

@@ -4,6 +4,7 @@ import { dirname, join, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse, serialize, MAX_SAVE_BYTES } from '../save-format';
 import { BinaryReader } from '../save-format/BinaryReader';
+import { ARMOUR_SLOT_PROPERTY } from '../save-format/SavePatcher';
 import { EditingSession, hex } from './EditingSession';
 import { atomicSave, atomicSaveStructural } from './AtomicSave';
 import { SettingsStore, validateSettings } from './Settings';
@@ -219,12 +220,19 @@ function registerIpc(): void {
       const changes: EditRequest[] = value.map((entry: unknown) => {
         if (!entry || typeof entry !== 'object') throw new Error('Invalid edit');
         const e = entry as Record<string, unknown>;
-        if (typeof e.propertyName !== 'string' || typeof e.value !== 'number')
-          throw new Error('Invalid edit');
+        if (typeof e.propertyName !== 'string') throw new Error('Invalid edit');
+        let editValue: string | number;
+        if (ARMOUR_SLOT_PROPERTY.test(e.propertyName)) {
+          if (typeof e.value !== 'string') throw new Error('Invalid edit');
+          editValue = e.value;
+        } else {
+          if (typeof e.value !== 'number') throw new Error('Invalid edit');
+          editValue = e.value;
+        }
         return {
           objectIndex: integer(e.objectIndex),
           propertyName: e.propertyName,
-          value: e.value,
+          value: editValue,
         };
       });
       s.apply(integer(revision), changes);

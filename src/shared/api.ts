@@ -10,7 +10,7 @@ export interface Settings {
 export interface EditRequest {
   objectIndex: number;
   propertyName: string;
-  value: number;
+  value: number | string;
 }
 export interface FieldView {
   objectIndex: number;
@@ -26,12 +26,39 @@ export interface FieldView {
 export interface PatchView {
   objectIndex: number;
   propertyName: string;
+  kind: 'scalar' | 'armour' | 'stock';
   label: string;
-  oldValue: number;
-  newValue: number;
+  oldValue: number | string;
+  newValue: number | string;
   offset: number;
   oldHex: string;
   newHex: string;
+}
+export interface ArmourOption {
+  guid: string;
+  quantity?: number;
+  /** Calibrated display name, when the piece's family is known. */
+  name?: string;
+  /** Rarity tier derived from the family member ordinal (Common…Legendary, Default). */
+  rarity?: string;
+  /** Observed equipment-entry kind; undefined for pieces never worn in this save. */
+  kind?: number;
+}
+export interface EquipmentSlotView {
+  objectIndex: number;
+  slot: number;
+  kind: number | null;
+  flag: number | null;
+  /** Equipped piece GUID, or null when the native entry is empty (a 4-byte present stub). */
+  guid: string | null;
+  /** False when the GUID does not resolve against this save's armour inventory (slot 3 records). */
+  resolvable: boolean;
+  /**
+   * Replacement pieces with a same-kind precedent in this save, owned stock first, followed by
+   * unclassified pieces (no observed kind) which keep the slot's kind byte when equipped.
+   * Empty slots 0–2 list pieces by slot position; equipping one is a structural change.
+   */
+  options: ArmourOption[];
 }
 export interface ObjectSummary {
   index: number;
@@ -74,6 +101,7 @@ export interface SessionView {
   warnings: ParseWarning[];
   canSave: boolean;
   fields: FieldView[];
+  equipment: EquipmentSlotView[];
   patches: PatchView[];
   canUndo: boolean;
   canRedo: boolean;

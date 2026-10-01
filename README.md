@@ -2,7 +2,7 @@
 
 An independent, local-only Electron + React + TypeScript desktop application for inspecting Gears Tactics PC saves and patching validated, existing scalar values. No game art, analytics, telemetry, accounts, or runtime network services.
 
-**Milestone 1 is implemented. Milestone 2 supports bounded integer/float editing with backups and verification.** Text writing, skill insertion/removal, resets, equipment changes and reclassing are deliberately unavailable. “Safe” means tested binary preservation, not game compatibility. User testing confirmed Gabe’s health edit and Gabe/Sid ability-point edits, separately and combined, work for one save. An initial loading failure did not reproduce with byte-identical combined output; its cause remains unknown. These results do not certify other edits or saves; see the [game load test results](docs/REVERSE_ENGINEERING.md#user-reported-game-load-tests-2026-09-24).
+**Milestone 1 is implemented. Milestone 2 supports bounded integer/float editing with backups and verification, and in-place armour editing.** Text writing, skill insertion/removal, resets, weapon/mod changes and reclassing are deliberately unavailable. “Safe” means tested binary preservation, not game compatibility. User testing confirmed Gabe’s health edit and Gabe/Sid ability-point edits, separately and combined, work for one save. An initial loading failure did not reproduce with byte-identical combined output; its cause remains unknown. These results do not certify other edits or saves; see the [game load test results](docs/REVERSE_ENGINEERING.md#user-reported-game-load-tests-2026-09-24). Armour edits are byte-verified but not yet game-tested; see [equipment editing](docs/EQUIPMENT_EDITING.md).
 
 ## Install and run
 
@@ -48,17 +48,18 @@ Draft values must be applied before either save action. Merely typing or applyin
 
 ### Currently editable
 
-Only existing, unique, four-byte properties on verified object identities:
+Only existing, unique, four-byte properties on verified object identities, plus verified fixed-width armour swaps:
 
-| Property             | Representation | Notes                                                                                  |
-| -------------------- | -------------- | -------------------------------------------------------------------------------------- |
-| CurrentAbilityPoints | signed int32   | Minimum 0; maximum configurable through Settings, up to 2,147,483,647; warns above 100 |
-| Health, Strength     | signed int32   | Non-negative; extreme values flagged                                                   |
-| MovementPoints       | signed int32   | Non-negative; extreme values flagged                                                   |
-| Accuracy             | float32        | **Raw multiplier** when editing: 0.6 means 60%; values above 1 are flagged             |
-| SoldierRosterSize    | signed int32   | On the campaign roster object; does not create soldiers                                |
+| Property             | Representation | Notes                                                                                                   |
+| -------------------- | -------------- | ------------------------------------------------------------------------------------------------------- |
+| CurrentAbilityPoints | signed int32   | Minimum 0; maximum configurable through Settings, up to 2,147,483,647; warns above 100                  |
+| Health, Strength     | signed int32   | Non-negative; extreme values flagged                                                                    |
+| MovementPoints       | signed int32   | Non-negative; extreme values flagged                                                                    |
+| Accuracy             | float32        | **Raw multiplier** when editing: 0.6 means 60%; values above 1 are flagged                              |
+| SoldierRosterSize    | signed int32   | On the campaign roster object; does not create soldiers                                                 |
+| Armour pieces        | 16-byte GUID   | Per soldier equipment slot on the **Equipment** tab; see [equipment editing](docs/EQUIPMENT_EDITING.md) |
 
-Actions (`ActionPoints`), level, squad assignments, class, text, identity and equipment are read only. Actions editing was removed because its effect on combat could not be reliably attributed to the selected character; ability-point editing remains available. Omitted properties are not inserted. No single-field “Reclass” button exists. Enabling **Experimental Editing** records the preference and shows a warning, but does not unlock any unimplemented operation.
+Actions (`ActionPoints`), level, squad assignments, class, text, identity, weapons and weapon mods are read only. Actions editing was removed because its effect on combat could not be reliably attributed to the selected character; ability-point editing remains available. Omitted properties are not inserted. No single-field “Reclass” button exists. Enabling **Experimental Editing** records the preference and shows a warning, but does not unlock any unimplemented operation.
 
 ## Soldier export and import
 

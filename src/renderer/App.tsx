@@ -22,12 +22,14 @@ import {
 } from 'lucide-react';
 import type { EditRequest, Result, SessionView, Settings as Preferences } from '../shared/api';
 import Overview from './components/Overview';
-import Soldiers, { fieldKey } from './components/Soldiers';
+import Soldiers, { equipmentKey, fieldKey } from './components/Soldiers';
 import Campaign from './components/Campaign';
 import Inspector from './components/Inspector';
 import Settings from './components/Settings';
 import Modal from './components/Modal';
 import { formatNumber } from './components/FieldEditor';
+import { shortGuid } from './components/ArmourSlotEditor';
+import { armourFamilyName } from '../shared/armour-names';
 import SoldierImport from './components/SoldierImport';
 import type { SoldierImportPreview } from '../shared/soldier';
 type Page = 'Overview' | 'Soldiers' | 'Campaign' | 'Raw Inspector';
@@ -85,9 +87,15 @@ export default function App() {
   }
   function draft(key: string, value: string) {
     const next = { ...drafts };
-    const field = session?.fields.find((f) => fieldKey(f.objectIndex, f.name) === key);
-    if (field && value.trim() !== '' && Number(value) === field.value) delete next[key];
-    else next[key] = value;
+    const equipment = session?.equipment.find(
+      (slot) => equipmentKey(slot.objectIndex, slot.slot) === key,
+    );
+    if (equipment && (value === '' || value === equipment.guid)) delete next[key];
+    else {
+      const field = session?.fields.find((f) => fieldKey(f.objectIndex, f.name) === key);
+      if (field && value.trim() !== '' && Number(value) === field.value) delete next[key];
+      else next[key] = value;
+    }
     setDrafts(next);
     void window.editor!.draftDirty(Object.keys(next).length > 0).then((result) => {
       if (!result.ok) setError(result.error);
@@ -111,6 +119,15 @@ export default function App() {
     if (!session) return;
     await run(async () => {
       const changes: EditRequest[] = Object.entries(drafts).map(([key, value]) => {
+        const equipment = key.match(/^equip:(\d+):([0-3])$/);
+        if (equipment) {
+          if (!value) throw new Error('Select an armour piece before applying changes.');
+          return {
+            objectIndex: Number(equipment[1]),
+            propertyName: `ArmourSlot:${equipment[2]}`,
+            value,
+          };
+        }
         const field = session.fields.find((f) => fieldKey(f.objectIndex, f.name) === key);
         if (!field || !value.trim() || !Number.isFinite(Number(value)))
           throw new Error('Enter valid numeric values before applying changes.');
@@ -554,9 +571,17 @@ export default function App() {
                 <div className="patch" key={p.offset}>
                   <strong>{p.label}</strong>
                   <div className="patch-values">
-                    <del>{formatNumber(p.oldValue)}</del>
+                    <del title={String(p.oldValue)}>
+                      {p.kind === 'armour'
+                        ? (armourFamilyName(String(p.oldValue)) ?? shortGuid(String(p.oldValue)))
+                        : formatNumber(Number(p.oldValue))}
+                    </del>
                     <ArrowRight size={15} />
-                    <b>{formatNumber(p.newValue)}</b>
+                    <b title={String(p.newValue)}>
+                      {p.kind === 'armour'
+                        ? (armourFamilyName(String(p.newValue)) ?? shortGuid(String(p.newValue)))
+                        : formatNumber(Number(p.newValue))}
+                    </b>
                   </div>
                   {settings.developerMode && (
                     <code>
