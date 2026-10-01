@@ -22,6 +22,11 @@ const FAMILY_NAMES: Record<string, string> = {
   '594ebf40': 'Onyx Helmet',
   '799d3299': 'Onyx Retro Helmet',
   f8ac6fca: 'Trooper Helmet',
+  '2da71cd8': 'Hunter Shell',
+  '02881eb3': 'Onyx Greaves',
+  '25e914a1': 'Destroyer Vest',
+  bd224847: 'UIR Holsters',
+  '0b99c229': 'Veteran Leg Guards',
 };
 
 const TIERED_RARITIES = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];

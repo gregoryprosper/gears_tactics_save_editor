@@ -3,11 +3,14 @@
  * not-yet-named armour family onto visible squad members so the loadout screen
  * reveals each family's display name. Run:
  *
- *   node --import tsx scripts/stage-armour-name-pass.ts
+ *   node --import tsx scripts/stage-armour-name-pass.ts [sourceSave] [destination] [families]
  *
- * Reads the probe save, writes artifacts/name-pass/GearGameSaveGame_Slot_41.
- * Copy that file into the game's Steam remote folder under a free slot, load it,
- * and screenshot the loadout screens of the characters listed in the manifest.
+ * Defaults stage all unnamed families onto the probe save. The game only displays
+ * an equipped piece it considers owned, so pick a source save whose stock contains
+ * the target families (scanned 2026-09-30: END GAME saves own ecd7b27c, 960cbdfb,
+ * 5e1c9c39; nothing owns 63a5d43a, 4c830e9e, 9c56c096). Copy the output into the
+ * game's Steam remote folder under a free slot, load it, and screenshot the
+ * loadout screens of the characters listed in the manifest.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -17,8 +20,9 @@ import { EditingSession } from '../src/main/EditingSession';
 import { defaultLimits } from '../src/save-format/SavePatcher';
 import { armourFamilyName } from '../src/shared/armour-names';
 
-const source = 'artifacts/armour-probe/GearGameSaveGame_Slot_41.current';
-const destination = 'artifacts/name-pass/GearGameSaveGame_Slot_41';
+const [sourceArg, destinationArg, familiesArg] = process.argv.slice(2);
+const source = sourceArg ?? 'artifacts/armour-probe/GearGameSaveGame_Slot_41.current';
+const destination = destinationArg ?? 'artifacts/name-pass/GearGameSaveGame_Slot_41';
 
 /** Family prefixes (first 4 GUID bytes) without a calibrated name. */
 const UNKNOWN_FAMILIES = [
@@ -39,8 +43,9 @@ const UNKNOWN_FAMILIES = [
   '4c830e9e',
   '9c56c096',
 ] as const;
+const FAMILIES = familiesArg ? familiesArg.split(',') : [...UNKNOWN_FAMILIES];
 /** Kinds observed for these families in other saves (5 = helmet, 1 = upper, 2 = lower). */
-const KNOWN_KIND: Partial<Record<(typeof UNKNOWN_FAMILIES)[number], number>> = {
+const KNOWN_KIND: Record<string, number | undefined> = {
   ecd7b27c: 5,
   '2da71cd8': 1,
   b002dc0d: 1,
@@ -88,7 +93,7 @@ const slots = save.characters
 
 const edits: { objectIndex: number; propertyName: string; value: string }[] = [];
 const manifest: { name: string; slot: number; prefix: string; guid: string; from: string }[] = [];
-for (const prefix of UNKNOWN_FAMILIES) {
+for (const prefix of FAMILIES) {
   const guid = pickMember(prefix);
   const kind = KNOWN_KIND[prefix];
   const candidates = slots
