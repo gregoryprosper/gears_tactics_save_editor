@@ -10,13 +10,16 @@ import {
   ARMOUR_SLOT_PROPERTY,
   defaultLimits,
 } from '../src/save-format/SavePatcher';
-import { atomicSave } from '../src/main/AtomicSave';
+import { atomicSave, atomicSaveStructural } from '../src/main/AtomicSave';
 import { EditingSession } from '../src/main/EditingSession';
 import {
   armourCatalog,
+  assignedSoldiers,
+  equipmentSlotRecords,
   readEquipmentEntries,
   readInventoryDefinitions,
 } from '../src/save-format/NativeSoldier';
+import { equipIntoEmptySlot } from '../src/save-format/EquipmentStructural';
 
 const endBytes = readFileSync('sample_save_files/END GAME -  Jacked 100%/geargamesavegame_slot_41');
 const end = parse(endBytes);
@@ -189,7 +192,7 @@ describe('armour patch transactions', () => {
     ).toThrow(/Invalid stock quantity/);
   });
 
-  it('rejects cross-slot, unknown, malformed, empty-slot and non-character edits', () => {
+  it('rejects cross-slot, unknown, malformed and non-character edits', () => {
     const save = end;
     const catalog = armourCatalog(save);
     const { character, slot, entry } = swappable();
@@ -214,14 +217,17 @@ describe('armour patch transactions', () => {
     expect(() => apply(character.objectIndex, 'ArmourSlot:4', 'zz')).toThrow(
       /not an editable, validated scalar/,
     );
-    const empty = save.characters.flatMap((c) =>
+    // Empty slots 0–2 now stage structural equips (covered below); an empty internal
+    // slot 3 still reaches the patcher's empty-slot rejection.
+    const internalEmpty = save.characters.flatMap((c) =>
       readEquipmentEntries(save, c.objectIndex)
         .map((e, index) => ({ e, index, objectIndex: c.objectIndex }))
-        .filter(({ e }) => !e),
-    )[0]!;
-    expect(() => apply(empty.objectIndex, `ArmourSlot:${empty.index}`, entry.guid)).toThrow(
-      /is empty/,
-    );
+        .filter(({ e, index }) => !e && index === 3),
+    )[0];
+    if (internalEmpty)
+      expect(() => apply(internalEmpty.objectIndex, 'ArmourSlot:3', entry.guid)).toThrow(
+        /is empty/,
+      );
     const outsider = save.objects.find((o) => o.classPath.includes('GanderCharacterRoster'))!;
     expect(() => apply(outsider.index, 'ArmourSlot:0', entry.guid)).toThrow(/character object/);
     const duplicate = {
@@ -289,5 +295,126 @@ describe('armour patch transactions', () => {
     expect(() => applyPatches(end, [widened])).toThrow(/provenance/);
     expect(ARMOUR_SLOT_PROPERTY.exec('ArmourSlot:3')?.[1]).toBe('3');
     expect(ARMOUR_SLOT_PROPERTY.test('ArmourSlot:9')).toBe(false);
+  });
+});
+
+describe('empty slot equipping (structural)', () => {
+  /** First corpus fixture with a squad character whose helmet slot is empty. */
+  function emptyHelmetFixture() {
+    for (const fixture of corpus.filter((f) => f.canSave)) {
+      const save = parse(readFileSync(fixture.path));
+      for (const character of save.characters) {
+        const records = equipmentSlotRecords(save, character.objectIndex);
+        if (
+          records[0] &&
+          !records[0].entry &&
+          records[1]?.entry &&
+          records[2]?.entry &&
+          assignedSoldiers(save).has(character.objectIndex) &&
+          character.stats.Health !== undefined
+        )
+          return { fixture, save, character, records };
+      }
+    }
+    throw new Error('no fixture with an empty helmet slot on an assigned soldier');
+  }
+
+  it('inserts a full entry into an empty slot, shifting only that character', () => {
+    const { save, character, records } = emptyHelmetFixture();
+    const catalog = armourCatalog(save);
+    const helmet = [...catalog.definitions.values()].find(
+      (d) => d.category === 'armour' && catalog.kindOf.get(d.guid) === 5,
+    )!;
+    const before = readEquipmentEntries(save, character.objectIndex);
+    const result = equipIntoEmptySlot(save, character.objectIndex, 0, helmet.guid);
+    expect(result.bytes.length).toBe(serialize(save).length + 21);
+    const reparsed = parse(result.bytes);
+    const entry = readEquipmentEntries(reparsed, result.objectIndex)[0]!;
+    expect(entry.guid).toBe(helmet.guid);
+    expect(entry.kind).toBe(5);
+    expect(entry.flag).toBe(1);
+    expect(readEquipmentEntries(reparsed, result.objectIndex)[1]!.guid).toBe(before[1]!.guid);
+    expect(parse(result.bytes).canSave).toBe(true);
+    expect(records[0]!.entry).toBeNull();
+  });
+
+  it('rejects occupied slots, the internal slot, and unknown pieces', () => {
+    const { save, character } = emptyHelmetFixture();
+    const catalog = armourCatalog(save);
+    const anyPiece = [...catalog.definitions.values()].find((d) => d.category === 'armour')!;
+    expect(() => equipIntoEmptySlot(save, character.objectIndex, 1, anyPiece.guid)).toThrow(
+      /already equipped/,
+    );
+    expect(() => equipIntoEmptySlot(save, character.objectIndex, 3, anyPiece.guid)).toThrow(
+      /cannot be equipped into/,
+    );
+    expect(() => equipIntoEmptySlot(save, character.objectIndex, 0, 'f'.repeat(32))).toThrow(
+      /does not exist in this save/,
+    );
+    expect(() => equipIntoEmptySlot(save, character.objectIndex, 0, 'zz')).toThrow(
+      /Invalid armour GUID/,
+    );
+  });
+
+  it('stages equips through the session alongside scalar edits, with undo', () => {
+    const { save, character } = emptyHelmetFixture();
+    const catalog = armourCatalog(save);
+    const helmet = [...catalog.definitions.values()].find(
+      (d) => d.category === 'armour' && catalog.kindOf.get(d.guid) === 5,
+    )!;
+    const other = save.characters.find(
+      (c) => c.objectIndex !== character.objectIndex && c.stats.Health !== undefined,
+    )!;
+    const session = new EditingSession('/tmp/example', save, defaultLimits);
+    session.enable();
+    session.apply(session.revision, [
+      { objectIndex: character.objectIndex, propertyName: 'ArmourSlot:0', value: helmet.guid },
+      { objectIndex: other.objectIndex, propertyName: 'Health', value: 1234 },
+    ]);
+    expect(session.structuralChanges).toHaveLength(1);
+    expect(session.structuralChanges[0]).toMatch(/Armour slot 0/);
+    const output = parse(session.output());
+    expect(
+      readEquipmentEntries(
+        output,
+        session.snapshot().characters.find((c) => c.displayName === character.displayName)!
+          .objectIndex,
+      )[0]!.guid,
+    ).toBe(helmet.guid);
+    expect(output.characters.find((c) => c.displayName === other.displayName)?.stats.Health).toBe(
+      1234,
+    );
+    session.move('undo');
+    expect(session.structuralChanges).toHaveLength(0);
+    expect(session.output().equals(serialize(save))).toBe(true);
+    session.move('redo');
+    expect(session.structuralChanges).toHaveLength(1);
+  });
+
+  it('persists through the structural atomic save', async () => {
+    const { save, character } = emptyHelmetFixture();
+    const catalog = armourCatalog(save);
+    const helmet = [...catalog.definitions.values()].find(
+      (d) => d.category === 'armour' && catalog.kindOf.get(d.guid) === 5,
+    )!;
+    const session = new EditingSession('/tmp/example', save, defaultLimits);
+    session.enable();
+    session.apply(session.revision, [
+      { objectIndex: character.objectIndex, propertyName: 'ArmourSlot:0', value: helmet.guid },
+    ]);
+    const directory = await mkdtemp(join(tmpdir(), 'gtse-equip-'));
+    try {
+      const source = join(directory, 'save');
+      const destination = join(directory, 'save.edited');
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(source, serialize(save));
+      await atomicSaveStructural(source, destination, session.baselineSave, session.output());
+      const written = parse(await readFile(destination));
+      const displayName = character.displayName;
+      const index = written.characters.find((c) => c.displayName === displayName)!.objectIndex;
+      expect(readEquipmentEntries(written, index)[0]!.guid).toBe(helmet.guid);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

@@ -176,6 +176,50 @@ export interface EquipmentEntry {
  * validating the complete suffix so the recorded offsets cannot describe a misaligned layout.
  * Armour swapping only rewrites the 16 GUID bytes; kind/flag bytes are never relocated.
  */
+export interface EquipmentSlotRecord {
+  slot: number;
+  /** Absolute offset of the present flag, recorded for occupied and empty slots alike. */
+  presentOffset: number;
+  entry: EquipmentEntry | null;
+}
+/**
+ * Light sequential walk of the four equipment entries, recording the present-flag offset
+ * even for empty slots (which are 4-byte stubs — no GUID/kind/flag bytes exist). For full
+ * suffix validation use readEquipmentEntries, which continues through weapons and skills.
+ */
+export function equipmentSlotRecords(
+  save: GearsTacticsSave,
+  objectIndex: number,
+): EquipmentSlotRecord[] {
+  const object = save.objects[objectIndex];
+  const frame = object?.body;
+  if (!object || !frame || !object.classPath.endsWith('.GanderCharacterData'))
+    throw new Error('Equipment entries require a character object with a body');
+  const r = new BinaryReader(serialize(save), frame.bodyOffset, frame.endOffset);
+  readFrame(r, frame.rootBase, save.objects.length);
+  readFrame(r, frame.rootBase, save.objects.length);
+  readPropertyList(r);
+  if (r.i32() !== 0) r.fail('Unsupported character property terminator/GUID');
+  return Array.from({ length: 4 }, (_, slot): EquipmentSlotRecord => {
+    const presentOffset = r.offset;
+    const present = r.i32();
+    if (present === 0) return { slot, presentOffset, entry: null };
+    if (present !== 1) r.fail('Invalid equipment entry presence flag');
+    const guidOffset = r.offset;
+    const guid = r.bytes(16).toString('hex');
+    const kindOffset = r.offset;
+    const kind = r.u8();
+    const flagOffset = r.offset;
+    const flag = r.i32();
+    if (flag !== 0 && flag !== 1) r.fail('Invalid equipment entry flag');
+    return {
+      slot,
+      presentOffset,
+      entry: { guid, kind, flag, presentOffset, guidOffset, kindOffset, flagOffset },
+    };
+  });
+}
+
 export function readEquipmentEntries(
   save: GearsTacticsSave,
   objectIndex: number,

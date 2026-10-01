@@ -90,7 +90,7 @@ export default function App() {
     const equipment = session?.equipment.find(
       (slot) => equipmentKey(slot.objectIndex, slot.slot) === key,
     );
-    if (equipment && value !== '' && value === equipment.guid) delete next[key];
+    if (equipment && (value === '' || value === equipment.guid)) delete next[key];
     else {
       const field = session?.fields.find((f) => fieldKey(f.objectIndex, f.name) === key);
       if (field && value.trim() !== '' && Number(value) === field.value) delete next[key];

@@ -25,6 +25,9 @@ import {
   type EquipmentEntry,
 } from '../save-format/NativeSoldier';
 import { armourFamilyName, armourRarityLabel, singletonRarity } from '../shared/armour-names';
+import { equipmentSlotRecords } from '../save-format/NativeSoldier';
+import { equipIntoEmptySlot, SLOT_KINDS } from '../save-format/EquipmentStructural';
+import { ARMOUR_SLOT_PROPERTY } from '../save-format/SavePatcher';
 import {
   exportSoldier,
   previewSoldierImport,
@@ -162,23 +165,83 @@ export class EditingSession {
     if (!this.editing) throw new Error('Enable editing first');
     if (revision !== this.revision)
       throw new Error('The editing session changed. Refresh and try again.');
-    const merged = new Map<string, EditRequest>(
-      this.patches.map((p) => [
-        `${p.objectIndex}:${p.propertyName}`,
-        { objectIndex: p.objectIndex, propertyName: p.propertyName, value: p.newValue },
-      ]),
-    );
+    // ArmourSlot edits on EMPTY slots are structural inserts (21 bytes into the character
+    // suffix), not fixed-width swaps. They stage through the rebuild path like imports;
+    // remaining edits rebase across the rebuild's object-index remap.
+    const structural: { edit: EditRequest; slot: number; guid: string }[] = [];
+    const fixed: EditRequest[] = [];
     const seen = new Set<string>();
-    for (const c of changes) {
-      const key = `${c.objectIndex}:${c.propertyName}`;
+    for (const change of changes) {
+      const key = `${change.objectIndex}:${change.propertyName}`;
       if (seen.has(key)) throw new Error('Duplicate change');
       seen.add(key);
-      merged.set(key, c);
+      const match = ARMOUR_SLOT_PROPERTY.exec(change.propertyName);
+      if (match && typeof change.value === 'string' && Number(match[1]) <= 2) {
+        let empty = false;
+        try {
+          empty = !equipmentSlotRecords(this.save, change.objectIndex)[Number(match[1])]?.entry;
+        } catch {
+          empty = false; // non-character objects fall through to the fixed-width rejection
+        }
+        if (empty) {
+          structural.push({
+            edit: change,
+            slot: Number(match[1]),
+            guid: change.value.toLowerCase(),
+          });
+          continue;
+        }
+      }
+      fixed.push(change);
     }
-    const next = createPatches(this.save, [...merged.values()], this.limits);
-    if (JSON.stringify(next) === JSON.stringify(this.patches)) return;
+    if (!structural.length) {
+      const merged = new Map<string, EditRequest>(
+        this.patches.map((p) => [
+          `${p.objectIndex}:${p.propertyName}`,
+          { objectIndex: p.objectIndex, propertyName: p.propertyName, value: p.newValue },
+        ]),
+      );
+      for (const c of fixed) merged.set(`${c.objectIndex}:${c.propertyName}`, c);
+      const next = createPatches(this.save, [...merged.values()], this.limits);
+      if (JSON.stringify(next) === JSON.stringify(this.patches)) return;
+      this.history = this.history.slice(0, this.position + 1);
+      this.history.push({ ...this.history[this.position]!, patches: next });
+      this.position++;
+      this.revision++;
+      return;
+    }
+    const imports = [
+      ...this.structuralChanges,
+      ...this.patches.map(
+        (p) => `${p.description}: ${p.oldValue} → ${p.newValue} (applied before equip)`,
+      ),
+    ];
+    let working = this.appliedSave();
+    let rebase = new Map<number, number>(
+      working.characters.map((c) => [c.objectIndex, c.objectIndex]),
+    );
+    for (const equip of structural) {
+      const objectIndex = rebase.get(equip.edit.objectIndex);
+      if (objectIndex === undefined)
+        throw new Error('The editing session changed. Refresh and try again.');
+      const result = equipIntoEmptySlot(working, objectIndex, equip.slot, equip.guid);
+      imports.push(
+        `Equip ${armourFamilyName(equip.guid) ?? equip.guid.slice(0, 8)} · Armour slot ${
+          equip.slot
+        } · ${result.save.characters.find((c) => c.objectIndex === result.objectIndex)?.displayName ?? `#${result.objectIndex}`}`,
+      );
+      working = result.save;
+      rebase = result.indices;
+    }
+    const rebased = fixed.map((edit) => {
+      const objectIndex = rebase.get(edit.objectIndex);
+      if (objectIndex === undefined)
+        throw new Error('The editing session changed. Refresh and try again.');
+      return { ...edit, objectIndex };
+    });
+    const patches = createPatches(working, rebased, this.limits);
     this.history = this.history.slice(0, this.position + 1);
-    this.history.push({ ...this.history[this.position]!, patches: next });
+    this.history.push({ save: working, patches, imports });
     this.position++;
     this.revision++;
   }
@@ -385,6 +448,8 @@ function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): Equipment
           p.propertyName === `ArmourSlot:${slot}`,
       )?.newValue;
       const guid = typeof staged === 'string' ? staged : (entry?.guid ?? null);
+      // Empty slots carry no kind; their options come from the slot position instead.
+      const optionKind = entry?.kind ?? (slot <= 2 ? SLOT_KINDS[slot] : undefined);
       views.push({
         objectIndex: character.objectIndex,
         slot,
@@ -393,9 +458,9 @@ function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): Equipment
         guid,
         resolvable: guid !== null && catalog.definitions.has(guid),
         options:
-          entry?.kind !== undefined
-            ? [...(optionsByKind.get(entry.kind) ?? []), ...unclassified]
-            : [],
+          optionKind === undefined
+            ? []
+            : [...(optionsByKind.get(optionKind) ?? []), ...unclassified],
       });
     });
   }

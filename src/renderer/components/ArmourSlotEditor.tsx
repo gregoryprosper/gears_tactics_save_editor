@@ -32,7 +32,10 @@ export default function ArmourSlotEditor({
     ? (currentOption?.name ?? armourFamilyName(current) ?? shortGuid(current))
     : null;
   const currentRarity = currentOption?.rarity;
-  const selectable = editing && slot.resolvable && slot.options.length > 0;
+  const empty = slot.guid === null;
+  // Empty slots (4-byte stubs) are equippable through the structural path; slot 3 is internal.
+  const equippable = empty ? slot.slot <= 2 : slot.resolvable;
+  const selectable = editing && equippable && slot.options.length > 0;
   const unclassifiedCount = slot.options.filter((o) => o.kind === undefined).length;
   // Variant pieces can share name and rarity; distinguish identical labels by GUID prefix.
   const labelCounts = new Map<string, number>();
@@ -54,6 +57,7 @@ export default function ArmourSlotEditor({
             value={current ?? ''}
             onChange={(e) => onChange(e.target.value)}
           >
+            {empty && <option value="">(empty)</option>}
             {slot.options.map((option) => (
               <option key={option.guid} value={option.guid}>
                 {optionLabel(
@@ -75,8 +79,10 @@ export default function ArmourSlotEditor({
         )}
       </label>
       <small>
-        {slot.guid === null
-          ? 'No native equipment record.'
+        {empty
+          ? editing && slot.slot <= 2
+            ? 'Empty slot · picking a piece inserts it (structural change)'
+            : 'No native equipment record.'
           : !slot.resolvable
             ? 'Internal record · not in this save’s armour inventory'
             : !editing

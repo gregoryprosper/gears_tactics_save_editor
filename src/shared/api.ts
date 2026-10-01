@@ -49,13 +49,14 @@ export interface EquipmentSlotView {
   slot: number;
   kind: number | null;
   flag: number | null;
-  /** Equipped piece GUID, or null when the native entry is empty. */
+  /** Equipped piece GUID, or null when the native entry is empty (a 4-byte present stub). */
   guid: string | null;
   /** False when the GUID does not resolve against this save's armour inventory (slot 3 records). */
   resolvable: boolean;
   /**
    * Replacement pieces with a same-kind precedent in this save, owned stock first, followed by
    * unclassified pieces (no observed kind) which keep the slot's kind byte when equipped.
+   * Empty slots 0–2 list pieces by slot position; equipping one is a structural change.
    */
   options: ArmourOption[];
 }

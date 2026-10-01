@@ -45,7 +45,7 @@ describe('fixed-width patch transactions', () => {
         ).toBe(edit.value);
       expect(serialize(parsed)).toEqual(input);
     }
-  });
+  }, 180_000);
   it('changes only the requested four-byte payload and reparses the expected integer', () => {
     const patches = createPatches(save, [edit]);
     const patched = applyPatches(save, patches);

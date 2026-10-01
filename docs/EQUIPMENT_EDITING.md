@@ -41,6 +41,12 @@ Weapon registrations (`WeaponRegistry`) are unrelated to these entries; weapon i
 
 The kind, record flag, present flag and all other bytes are preserved; output length is unchanged, so armour edits flow through the fixed-width patch pipeline (`applyPatches` re-derives each patch, verifies provenance, checks byte windows, and reparses the output with a structural fingerprint comparison). The patcher generalized from 4-byte to arbitrary fixed-width patches for this; variable-length and reference-rewriting operations still require the structural transaction path per [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Equipping empty slots (structural path, 2026-10-01)
+
+An empty equipment entry is **not** 25 zeroed bytes — it is a 4-byte present-flag stub (`present = 0` and nothing else), so filling a slot inserts 21 bytes (GUID + kind + record flag) and shifts the rest of that character's suffix. That is a variable-length edit, rebuilt through the relocatable graph writer (`EquipmentStructural.equipIntoEmptySlot`) rather than the patcher: locate the character's suffix region inside its graph body, replace the stub, rebuild the whole file, reparse, and verify — the entry decodes with the written GUID/kind/flag, every other character's equipment is unchanged, and the roster decodes. Game-verified 2026-10-01: a save with an inserted helmet on Gabe Diaz loaded in-game, displayed and kept the piece through the game's own re-save.
+
+Rules: slots 0–2 only (slot 3 is internal); the written kind follows the slot position (5/1/2); the record flag follows squad membership (1 assigned, 0 reserve); the piece must exist in this save's armour inventory — unobserved-kind pieces are allowed since the slot dictates the kind. In the session these edits stage like imports (`structuralChanges`), remain undoable, rebase any simultaneous fixed-width edits across the rebuild's object-index remap, and save through `atomicSaveStructural`. The Equipment tab lists options for empty slots from the slot position.
+
 ## UI behaviour
 
 - Options are sorted by stock quantity, then GUID, with unclassified pieces appended. Pieces display as their calibrated name (otherwise short GUID); developer mode adds kind, record flag and hex diffs in Pending changes.
