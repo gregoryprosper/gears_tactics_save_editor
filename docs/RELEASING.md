@@ -46,7 +46,27 @@ Get-FileHash .\Gears-Tactics-Save-Editor-0.1.0-windows-x64-setup.exe -Algorithm 
 Get-Content .\SHA256SUMS.txt
 ```
 
-Compare the calculated hash with the line for that exact filename. Checksums detect corrupted or mismatched downloads; they are not a publisher signature.
+Compare the calculated hash with the line for that exact filename. Checksums detect corrupted or mismatched downloads; they are not a publisher signature. The same verification steps apply to every release, substituting that release's filenames.
+
+## Published v0.2.0
+
+[Gears Tactics Save Editor v0.2.0](https://github.com/gregoryprosper/gears_tactics_save_editor/releases/tag/v0.2.0) was published on September 26, 2026, from commit `0ef9904e747e486237cb340524b96a4943458e01`. It added soldier export and import (`.soldier.txt` archives), with imported weapons registered in the destination inventory.
+
+Assets follow the same four-file pattern as v0.1.0 (Windows x64 setup and portable, macOS universal DMG, `SHA256SUMS.txt`), with the version in each filename. Signing policy is unchanged: Windows executables unsigned, macOS ad-hoc signed without notarization. 120 automated tests and the Electron smoke test passed; Gary Add and Gabe Replace transfers were confirmed in-game with weapons, save/reload, combat, and imported abilities. Windows and Intel Mac runtime validation remains outstanding.
+
+## Published v0.3.0
+
+[Gears Tactics Save Editor v0.3.0](https://github.com/gregoryprosper/gears_tactics_save_editor/releases/tag/v0.3.0) was published on October 1, 2026. The tag sits on commit `743957505b6621fcd6da2072b4c7f3fa854ad527` (the version bump); the application binaries were built from merge commit `a56d9e0c1970a3c97b6f7676af1fbcb034198a6a`, whose source differs from the tag only by documentation (README and this file). It added armour equipment editing: piece swaps, empty-slot equipping (structural 21-byte insertion), stock grants, and the complete piece name table (32 of 34 families; the remaining two render as literal "Error" in the game itself).
+
+| Asset                                                        | Platform and use                                            |
+| ------------------------------------------------------------ | ----------------------------------------------------------- |
+| `Gears-Tactics-Save-Editor-0.3.0-windows-x64-setup.exe`      | Windows x64 NSIS installer                                  |
+| `Gears-Tactics-Save-Editor-0.3.0-windows-x64-portable.exe`   | Windows x64 app that runs without installation              |
+| `Gears-Tactics-Save-Editor-0.3.0-macos-universal.dmg`        | macOS app for Apple Silicon and Intel; drag to Applications |
+| `SHA256SUMS.txt`                                             | SHA-256 checksums for the three binaries                    |
+| `Gears.Tactics.Save.Editor-0.3.0-arm64.dmg`                  | Earlier Apple-Silicon-only build of the same release; kept for reference, not covered by `SHA256SUMS.txt` |
+
+The standard three binaries were cross-compiled on Apple Silicon macOS with Node.js 24.20.0 per the build instructions below, replacing the initially published arm64-only DMG. Signing policy is unchanged: Windows executables unsigned, macOS ad-hoc signed without notarization. 132 automated tests, the production build, the Electron smoke test, and a packaged-app launch test on Apple Silicon passed. Armour swaps, stock grants, and empty-slot equips were confirmed in a live campaign. Windows and Intel Mac runtime validation remains outstanding.
 
 ## Building release assets
 
