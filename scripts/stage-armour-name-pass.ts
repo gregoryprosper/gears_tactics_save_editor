@@ -6,11 +6,13 @@
  *   node --import tsx scripts/stage-armour-name-pass.ts [sourceSave] [destination] [families]
  *
  * Defaults stage all unnamed families onto the probe save. The game only displays
- * an equipped piece it considers owned, so pick a source save whose stock contains
- * the target families (scanned 2026-09-30: END GAME saves own ecd7b27c, 960cbdfb,
- * 5e1c9c39; nothing owns 63a5d43a, 4c830e9e, 9c56c096). Copy the output into the
- * game's Steam remote folder under a free slot, load it, and screenshot the
- * loadout screens of the characters listed in the manifest.
+ * an equipped piece it considers owned, so members with no stock are granted
+ * quantity 1 in the same pass (4-byte inventory patches). Prefer a source save
+ * written by the game on the target machine: the Steam Cloud has been observed
+ * to drop manually copied files mid-sync, and foreign saves may be ignored.
+ * Copy the output into the game's Steam remote folder under a free slot (with
+ * the game and Steam closed), load it, and screenshot the loadout screens of
+ * the characters listed in the manifest.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -62,7 +64,9 @@ const save = parse(bytes);
 if (!save.canSave) throw new Error('source save is not editable');
 const catalog = armourCatalog(save);
 
-function pickMember(prefix: string): string {
+/** One equippable member per family: highest stock, skipping the Default tier of a
+ *  six-member family when nothing is owned (a blueprint pseudo-tier may not render a name). */
+function pickMember(prefix: string): { guid: string; quantity: number } {
   const members = [...catalog.definitions.values()]
     .filter((d) => d.guid.startsWith(prefix))
     .sort(
@@ -71,7 +75,11 @@ function pickMember(prefix: string): string {
         parseInt(a.guid.slice(24, 26), 16) - parseInt(b.guid.slice(24, 26), 16),
     );
   if (members.length === 0) throw new Error(`no catalog member for family ${prefix}`);
-  return members[0]!.guid;
+  if (!members.some((m) => (m.quantity ?? 0) > 0) && members.length === 6) {
+    const common = members[1]!;
+    return { guid: common.guid, quantity: 0 };
+  }
+  return { guid: members[0]!.guid, quantity: members[0]!.quantity ?? 0 };
 }
 
 const slots = save.characters
@@ -91,10 +99,18 @@ const slots = save.characters
       }));
   });
 
-const edits: { objectIndex: number; propertyName: string; value: string }[] = [];
-const manifest: { name: string; slot: number; prefix: string; guid: string; from: string }[] = [];
+const edits: { objectIndex: number; propertyName: string; value: number | string }[] = [];
+const manifest: {
+  name: string;
+  slot: number;
+  prefix: string;
+  guid: string;
+  from: string;
+  granted: boolean;
+}[] = [];
 for (const prefix of FAMILIES) {
-  const guid = pickMember(prefix);
+  const { guid, quantity } = pickMember(prefix);
+  if (armourFamilyName(guid)) continue; // already calibrated
   const kind = KNOWN_KIND[prefix];
   const candidates = slots
     .filter((s) => !s.current.startsWith(prefix))
@@ -103,12 +119,21 @@ for (const prefix of FAMILIES) {
   const target = candidates[0];
   if (!target) throw new Error(`no free slot for family ${prefix}`);
   target.assigned++;
+  const granted = quantity < 1;
+  if (granted) edits.push({ objectIndex: -1, propertyName: `ArmourStock:${guid}`, value: 1 });
   edits.push({
     objectIndex: target.objectIndex,
     propertyName: `ArmourSlot:${target.slot}`,
     value: guid,
   });
-  manifest.push({ name: target.name, slot: target.slot, prefix, guid, from: target.current });
+  manifest.push({
+    name: target.name,
+    slot: target.slot,
+    prefix,
+    guid,
+    from: target.current,
+    granted,
+  });
 }
 
 const session = new EditingSession(source, save, defaultLimits);
@@ -116,12 +141,19 @@ session.enable();
 session.apply(session.revision, edits);
 const output = session.output();
 
-// Verify: exactly 16 sixteen-byte windows differ from the original.
+// Verify: the only changed bytes are those inside the applied patch windows.
 const original = serialize(save);
 const changed = new Set<number>();
 for (let i = 0; i < original.length; i++) if (original[i] !== output[i]) changed.add(i);
-if (changed.size !== 16 * edits.length)
-  throw new Error(`expected ${16 * edits.length} changed bytes, got ${changed.size}`);
+const windowBytes = new Set<number>();
+let expected = 0;
+for (const patch of session.patches)
+  for (let i = 0; i < patch.newBytes.length; i++) {
+    windowBytes.add(patch.offset + i);
+    if (patch.newBytes[i] !== original[patch.offset + i]) expected++;
+  }
+if (changed.size !== expected || [...changed].some((pos) => !windowBytes.has(pos)))
+  throw new Error(`expected ${expected} changed bytes inside patch windows, got ${changed.size}`);
 const reparsed = parse(output);
 for (const row of manifest) {
   const character = reparsed.characters.find((c) => c.displayName === row.name);
@@ -136,5 +168,5 @@ console.log(`staged ${edits.length} pieces -> ${destination} (${output.length} b
 console.log('\nScreenshot manifest (loadout screens to capture in game):');
 for (const row of manifest)
   console.log(
-    `  ${row.name.padEnd(14)} slot ${row.slot}  <-  ${row.prefix} (${armourFamilyName(row.guid) ?? 'unknown'})  was ${armourFamilyName(row.from) ?? row.from.slice(0, 8)}`,
+    `  ${row.name.padEnd(14)} slot ${row.slot}  <-  ${row.prefix} (${armourFamilyName(row.guid) ?? 'unknown'})${row.granted ? ' [stock granted]' : ''}  was ${armourFamilyName(row.from) ?? row.from.slice(0, 8)}`,
   );

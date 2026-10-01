@@ -1,8 +1,9 @@
 import { parse, serialize } from './index';
 import type { GearsTacticsSave, UnrealProperty } from './types';
 import type { EditRequest } from '../shared/api';
-import { armourCatalog, cachedEquipmentEntries } from './NativeSoldier';
-export type SavePatchKind = 'scalar' | 'armour';
+import { armourCatalog, cachedEquipmentEntries, readInventoryDefinitions } from './NativeSoldier';
+import { armourFamilyName } from '../shared/armour-names';
+export type SavePatchKind = 'scalar' | 'armour' | 'stock';
 export interface SavePatch {
   kind: SavePatchKind;
   objectIndex: number;
@@ -20,6 +21,7 @@ export interface EditLimits {
 export const defaultLimits: EditLimits = { abilityPointsMaximum: 2147483647 };
 const integers = new Set(['CurrentAbilityPoints', 'Health', 'Strength', 'MovementPoints']);
 export const ARMOUR_SLOT_PROPERTY = /^ArmourSlot:([0-3])$/;
+export const ARMOUR_STOCK_PROPERTY = /^ArmourStock:([0-9a-f]{32})$/;
 export function editableProperties(
   save: GearsTacticsSave,
 ): { objectIndex: number; property: UnrealProperty }[] {
@@ -103,6 +105,45 @@ function armourPatch(save: GearsTacticsSave, edit: EditRequest, slot: number): S
     newValue: guid,
   };
 }
+/**
+ * A stock grant rewrites only the 4-byte quantity of one armour inventory definition. The
+ * game displays an equipped piece only when the character owns it, so granting stock is the
+ * enabling step for equipping pieces this save has never held.
+ */
+function armourStockPatch(save: GearsTacticsSave, edit: EditRequest): SavePatch | null {
+  const match = ARMOUR_STOCK_PROPERTY.exec(edit.propertyName);
+  if (!match) return null;
+  if (typeof edit.value !== 'number' || !Number.isInteger(edit.value) || edit.value < 0)
+    throw new Error(`Invalid stock quantity for ${edit.propertyName.slice(12, 20)}`);
+  const guid = match[1]!;
+  const matches = [...readInventoryDefinitions(save).values()].filter(
+    (d) => d.category === 'armour' && d.guid === guid,
+  );
+  if (matches.length === 0)
+    throw new Error('The selected armour piece does not exist in this save');
+  if (matches.length > 1)
+    throw new Error(`Ambiguous armour definition for stock grant: ${guid.slice(0, 8)}`);
+  const definition = matches[0]!;
+  if (definition.quantityOffset === undefined || definition.quantity === undefined)
+    throw new Error('Armour definition carries no stock record');
+  const newBytes = Buffer.alloc(4);
+  newBytes.writeInt32LE(edit.value);
+  const oldBytes = Buffer.alloc(4);
+  oldBytes.writeInt32LE(definition.quantity);
+  if (newBytes.equals(oldBytes)) return null;
+  return {
+    kind: 'stock',
+    objectIndex: save.objects.findIndex((o) => o.classPath === definition.inventoryClass),
+    propertyName: edit.propertyName,
+    description: `Armour stock ${armourFamilyName(guid) ?? guid.slice(0, 8)} → ${edit.value}`,
+    offset: definition.quantityOffset,
+    oldBytes,
+    newBytes,
+    oldValue: definition.quantity,
+    newValue: edit.value,
+  };
+}
+
 export function createPatches(
   save: GearsTacticsSave,
   edits: EditRequest[],
@@ -131,6 +172,12 @@ export function createPatches(
       if (patch) result.push(patch);
       continue;
     }
+    const stock = armourStockPatch(save, edit);
+    if (stock) {
+      result.push(stock);
+      continue;
+    }
+    if (ARMOUR_STOCK_PROPERTY.test(edit.propertyName)) continue;
     const found = allowed.find(
       (e) => e.objectIndex === edit.objectIndex && e.property.name === edit.propertyName,
     );
@@ -268,6 +315,13 @@ export function validateOutput(
       const slot = Number(ARMOUR_SLOT_PROPERTY.exec(patch.propertyName)![1]);
       const entry = cachedEquipmentEntries(reparsed, patch.objectIndex)[slot] ?? null;
       if (!entry || entry.guid !== patch.newValue)
+        throw new Error(`Edited value failed to reparse: ${patch.description}`);
+    } else if (patch.kind === 'stock') {
+      const guid = ARMOUR_STOCK_PROPERTY.exec(patch.propertyName)![1]!;
+      const matches = readInventoryDefinitions(reparsed).filter(
+        (d) => d.category === 'armour' && d.guid === guid,
+      );
+      if (matches.length !== 1 || matches[0]!.quantity !== patch.newValue)
         throw new Error(`Edited value failed to reparse: ${patch.description}`);
     } else {
       const property = reparsed.objects[patch.objectIndex]?.properties.find(

@@ -26,7 +26,7 @@ export interface FieldView {
 export interface PatchView {
   objectIndex: number;
   propertyName: string;
-  kind: 'scalar' | 'armour';
+  kind: 'scalar' | 'armour' | 'stock';
   label: string;
   oldValue: number | string;
   newValue: number | string;

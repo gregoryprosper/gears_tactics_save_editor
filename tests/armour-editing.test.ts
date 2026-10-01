@@ -12,7 +12,11 @@ import {
 } from '../src/save-format/SavePatcher';
 import { atomicSave } from '../src/main/AtomicSave';
 import { EditingSession } from '../src/main/EditingSession';
-import { armourCatalog, readEquipmentEntries } from '../src/save-format/NativeSoldier';
+import {
+  armourCatalog,
+  readEquipmentEntries,
+  readInventoryDefinitions,
+} from '../src/save-format/NativeSoldier';
 
 const endBytes = readFileSync('sample_save_files/END GAME -  Jacked 100%/geargamesavegame_slot_41');
 const end = parse(endBytes);
@@ -151,6 +155,38 @@ describe('armour patch transactions', () => {
     expect(swapped.guid).toBe(unclassified);
     expect(swapped.kind).toBe(entry.kind);
     expect(swapped.flag).toBe(entry.flag);
+  });
+
+  it('grants stock on an inventory definition with a four-byte patch and reparse check', () => {
+    const target = [...armourCatalog(end).definitions.values()].find(
+      (d) => d.category === 'armour' && d.quantity !== undefined && d.quantity !== 7,
+    );
+    expect(target).toBeDefined();
+    const session = new EditingSession('/tmp/example', end, defaultLimits);
+    session.enable();
+    session.apply(session.revision, [
+      { objectIndex: 0, propertyName: `ArmourStock:${target!.guid}`, value: 7 },
+    ]);
+    const patch = session.snapshot().patches.find((p) => p.kind === 'stock');
+    expect(patch?.newValue).toBe(7);
+    expect(patch?.oldValue).toBe(target!.quantity);
+    expect(patch?.newHex).toHaveLength(11); // four bytes hex, space separated
+    const reparsed = parse(session.output());
+    const granted = readInventoryDefinitions(reparsed).find(
+      (d) => d.category === 'armour' && d.guid === target!.guid,
+    );
+    expect(granted?.quantity).toBe(7);
+    expect(session.output().equals(serialize(end))).toBe(false);
+    expect(() =>
+      session.apply(session.revision, [
+        { objectIndex: 0, propertyName: `ArmourStock:${'f'.repeat(32)}`, value: 1 },
+      ]),
+    ).toThrow(/does not exist in this save/);
+    expect(() =>
+      session.apply(session.revision, [
+        { objectIndex: 0, propertyName: `ArmourStock:${target!.guid}`, value: -2 },
+      ]),
+    ).toThrow(/Invalid stock quantity/);
   });
 
   it('rejects cross-slot, unknown, malformed, empty-slot and non-character edits', () => {

@@ -27,6 +27,9 @@ const earlyBytes = readFileSync(
 const end = parse(endBytes),
   early = parse(earlyBytes);
 const character = (name: string) => end.characters.find((c) => c.displayName === name)!;
+/** Definitions minus positional metadata that legitimately shifts when a transfer rewrites the file. */
+const stock = (save: Parameters<typeof readInventoryDefinitions>[0]) =>
+  readInventoryDefinitions(save).map(({ quantityOffset: _offset, ...rest }) => rest);
 const packageFor = (name: string) => exportSoldier(end, character(name).objectIndex);
 function files(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
@@ -170,7 +173,7 @@ describe('complete research candidate generation', () => {
       ...end.campaign,
       rosterObjectIndex: result.campaign.rosterObjectIndex,
     });
-    expect(readInventoryDefinitions(result)).toEqual(readInventoryDefinitions(end));
+    expect(stock(result)).toEqual(stock(end));
     expect(serialize(early)).toEqual(earlyBytes);
   });
   it('blocks transferring cosmetic definitions absent from the destination', () => {
@@ -204,7 +207,7 @@ describe('complete research candidate generation', () => {
     expect(
       result.characters.find((c) => c.objectIndex === candidate.soldierIndex)?.stats.ActionPoints,
     ).toBe(character('Gary Carmine').stats.ActionPoints);
-    expect(readInventoryDefinitions(result)).toEqual(readInventoryDefinitions(end));
+    expect(stock(result)).toEqual(stock(end));
     expect(() => buildSoldierCandidate(result, pkg, 'add')).toThrow(/capacity/);
     expect(serialize(end)).toEqual(endBytes);
   });

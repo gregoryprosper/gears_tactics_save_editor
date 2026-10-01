@@ -377,6 +377,8 @@ export interface InventoryDefinition {
   category: 'armour' | 'mod' | 'cosmetic';
   inventoryClass: string;
   quantity?: number;
+  /** Absolute offset of the quantity int32, for fixed-width stock patches. */
+  quantityOffset?: number;
   assetIdentity?: string;
   linkedGuid?: string;
 }
@@ -405,6 +407,7 @@ export function readInventoryDefinitions(save: GearsTacticsSave): InventoryDefin
       if (seen.has(guid)) r.fail('Duplicate inventory definition');
       seen.add(guid);
       if (numeric) {
+        const quantityOffset = r.offset;
         const quantity = r.i32();
         const linkedGuid = r.bytes(16).toString('hex');
         if (quantity < 0) r.fail('Unsupported negative inventory quantity');
@@ -412,6 +415,7 @@ export function readInventoryDefinitions(save: GearsTacticsSave): InventoryDefin
           guid,
           category: object.classPath.includes('Armour') ? 'armour' : 'mod',
           quantity,
+          quantityOffset,
           linkedGuid,
           inventoryClass: object.classPath,
         });
