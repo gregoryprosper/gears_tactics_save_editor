@@ -2,12 +2,13 @@ import type { ArmourOption, EquipmentSlotView } from '../../shared/api';
 import { armourFamilyName } from '../../shared/armour-names';
 export const shortGuid = (guid: string) => guid.slice(0, 8).toUpperCase();
 
-function optionLabel(option: ArmourOption): string {
+function optionLabel(option: ArmourOption, disambiguate: boolean): string {
   const name = option.name ?? shortGuid(option.guid);
   const rarity = option.rarity ? ` · ${option.rarity}` : '';
   const stock = option.quantity !== undefined ? ` · stock ${option.quantity}` : '';
   const classified = option.kind === undefined ? ' · unclassified' : '';
-  return `${name}${rarity}${stock}${classified}`;
+  const guidSuffix = disambiguate ? ` · ${shortGuid(option.guid)}` : '';
+  return `${name}${rarity}${stock}${classified}${guidSuffix}`;
 }
 export default function ArmourSlotEditor({
   slot,
@@ -33,6 +34,12 @@ export default function ArmourSlotEditor({
   const currentRarity = currentOption?.rarity;
   const selectable = editing && slot.resolvable && slot.options.length > 0;
   const unclassifiedCount = slot.options.filter((o) => o.kind === undefined).length;
+  // Variant pieces can share name and rarity; distinguish identical labels by GUID prefix.
+  const labelCounts = new Map<string, number>();
+  for (const option of slot.options) {
+    const key = `${option.name ?? ''}|${option.rarity ?? ''}`;
+    labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
+  }
   return (
     <div
       className={`stat-field ${draft !== undefined ? 'changed-field' : ''} ${
@@ -49,7 +56,10 @@ export default function ArmourSlotEditor({
           >
             {slot.options.map((option) => (
               <option key={option.guid} value={option.guid}>
-                {optionLabel(option)}
+                {optionLabel(
+                  option,
+                  (labelCounts.get(`${option.name ?? ''}|${option.rarity ?? ''}`) ?? 0) > 1,
+                )}
                 {option.guid === slot.guid ? ' · current' : ''}
               </option>
             ))}

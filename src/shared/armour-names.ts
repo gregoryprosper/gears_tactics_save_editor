@@ -27,6 +27,32 @@ const FAMILY_NAMES: Record<string, string> = {
   '25e914a1': 'Destroyer Vest',
   bd224847: 'UIR Holsters',
   '0b99c229': 'Veteran Leg Guards',
+  '8a6f7eca': 'Destroyer Leg Guards',
+  a8c5c01c: 'Regulation Boots',
+  '34645318': 'Thrashball Pads',
+  '9c56c096': 'Thrashball Pads',
+  '5e1c9c39': 'Destroyer Vest',
+  '4c830e9e': 'Destroyer Vest',
+  '63a5d43a': 'Delta Straps',
+  ecd7b27c: 'UIR Regulator',
+  '910d368d': 'Cadet Shin Guards',
+};
+
+/**
+ * Fixed in-game rarity for singleton families (variant pieces with no tier ladder), read
+ * from the running game. Two families (b002dc0d, 960cbdfb) render as literal "Error" in
+ * the game UI itself — cut or placeholder pieces with no display name anywhere.
+ */
+const SINGLETON_RARITY: Record<string, string> = {
+  ecd7b27c: 'Common',
+  '63a5d43a': 'Epic',
+  '0b99c229': 'Rare',
+  a8c5c01c: 'Rare',
+  '910d368d': 'Rare',
+  '34645318': 'Rare',
+  '9c56c096': 'Rare',
+  '5e1c9c39': 'Rare',
+  '4c830e9e': 'Rare',
 };
 
 const TIERED_RARITIES = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
@@ -34,6 +60,11 @@ const TIERED_RARITIES = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
 /** Display name for a catalogue piece GUID, when its family has been calibrated. */
 export function armourFamilyName(guid: string): string | undefined {
   return FAMILY_NAMES[guid.slice(0, 8)];
+}
+
+/** In-game rarity of a singleton variant piece, when calibrated. */
+export function singletonRarity(guid: string): string | undefined {
+  return SINGLETON_RARITY[guid.slice(0, 8)];
 }
 
 /**

@@ -26,25 +26,11 @@ const [sourceArg, destinationArg, familiesArg] = process.argv.slice(2);
 const source = sourceArg ?? 'artifacts/armour-probe/GearGameSaveGame_Slot_41.current';
 const destination = destinationArg ?? 'artifacts/name-pass/GearGameSaveGame_Slot_41';
 
-/** Family prefixes (first 4 GUID bytes) without a calibrated name. */
-const UNKNOWN_FAMILIES = [
-  '02881eb3',
-  '2da71cd8',
-  'bd224847',
-  'ecd7b27c',
-  '25e914a1',
-  '8a6f7eca',
-  'b002dc0d',
-  '0b99c229',
-  'a8c5c01c',
-  '960cbdfb',
-  '910d368d',
-  '5e1c9c39',
-  '34645318',
-  '63a5d43a',
-  '4c830e9e',
-  '9c56c096',
-] as const;
+/** Family prefixes (first 4 GUID bytes) without a calibrated name. Empty since 2026-10-01:
+ *  all 34 families are named except b002dc0d and 960cbdfb, which render as literal "Error"
+ *  in the game UI itself (cut/placeholder pieces with no name anywhere). Pass remaining
+ *  families explicitly as the third argument if ever needed again. */
+const UNKNOWN_FAMILIES: string[] = [];
 const FAMILIES = familiesArg ? familiesArg.split(',') : [...UNKNOWN_FAMILIES];
 /** Kinds observed for these families in other saves (5 = helmet, 1 = upper, 2 = lower). */
 const KNOWN_KIND: Record<string, number | undefined> = {

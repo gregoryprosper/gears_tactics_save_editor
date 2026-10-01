@@ -24,7 +24,7 @@ import {
   type ArmourCatalog,
   type EquipmentEntry,
 } from '../save-format/NativeSoldier';
-import { armourFamilyName, armourRarityLabel } from '../shared/armour-names';
+import { armourFamilyName, armourRarityLabel, singletonRarity } from '../shared/armour-names';
 import {
   exportSoldier,
   previewSoldierImport,
@@ -340,7 +340,7 @@ function equipmentViews(save: GearsTacticsSave, patches: SavePatch[]): Equipment
     members.forEach((guid, ordinal) => {
       pieceLabels.set(guid, {
         name: armourFamilyName(guid),
-        rarity: armourRarityLabel(ordinal, members.length),
+        rarity: armourRarityLabel(ordinal, members.length) ?? singletonRarity(guid),
       });
     });
   }
